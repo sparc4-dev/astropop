@@ -50,28 +50,28 @@ class _SourceCatalogClass:
 
     @property
     def sources_id(self):
-        """List of sources id in catalog."""
+        """Get the list of sources id in catalog."""
         return self._get_id()
 
     @property
     def skycoord(self):
-        """Sources coordinates in SkyCoord format."""
+        """Get the sources coordinates in SkyCoord format."""
         return self._get_skycoord()
 
     @property
     def ra_dec_list(self):
-        """Sources coordinates in [(ra, dec)] format."""
+        """Get the sources coordinates in [(ra, dec)] format."""
         sk = self.skycoord
         return list(zip(sk.ra.degree, sk.dec.degree))
 
     @property
     def flux(self):
-        """Sources fluxes in [(flux, flux_error)] format."""
+        """Get the sources fluxes in [(flux, flux_error)] format."""
         return self._get_flux()
 
     @property
     def magnitude(self):
-        """Sources photometric magnitude in [(mag, mag_error)] format."""
+        """Get the sources photometric mag in [(mag, mag_error)] format."""
 
     @property
     def table(self):
@@ -104,7 +104,7 @@ class _SourceCatalogClass:
         """If a catalog setup is needed."""
 
     def _query(self):
-        """Initial query of the catalog."""
+        """Query the catalog."""
         raise NotImplementedError
 
     def _get_id(self):
@@ -128,7 +128,23 @@ class _SourceCatalogClass:
 
         Parameters
         ----------
+        ra, dec: float or array-like
+            RA and Dec coordinates of the objects to be matched to this
+            catalog. All coordinates in decimal degree format.
+        limit_angle: string, float, `~astropy.coordinates.Angle`
+            Angle limit for matching indexes. If string, if must be
+            `~astropy.coordinates.Angle` compatible. If float, it will be
+            interpreted as a decimal degree.
         """
 
     def __getitem__(self, item):
-        """Get an item from the catalog."""
+        """Get items from the catalog.
+
+        A new catalog with only the selected sources is returned.
+        """
+        if not isinstance(item, (int, list, np.ndarray, slice)):
+            raise KeyError(f"{item}")
+
+        nc = copy.copy(self)
+        nc._result = Table(self._result[item])
+        return nc
