@@ -161,10 +161,9 @@ class SimbadCatalogClass(_BasePhotometryCatalog):
         flux_keys = ['flux', 'flux_error', 'flux_unit', 'flux_bibcode']
         table_props = [('id', ''), ('ra', np.nan), ('dec', np.nan),
                        ('flux', np.nan), ('flux_error', np.nan),
-                       ('flux_unit', ''), 'flux_bibcode', '']
+                       ('flux_unit', ''), ('flux_bibcode', '')]
         res = self._match_objects(ra, dec, band, limit_angle,
                                   flux_keys, table_props)
-
         return res
 
     @staticmethod

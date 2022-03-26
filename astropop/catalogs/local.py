@@ -11,7 +11,7 @@ from ..astrometry.coords_utils import guess_coordinates
 from .base_catalog import _BasePhotometryCatalog, match_indexes
 
 
-__all__ = ['TableCatalog', 'ASCIICatalog', 'FITSCatalog']
+__all__ = ['TableCatalog', 'ASCIICatalog']
 
 
 class _LocalCatalog(_BasePhotometryCatalog, abc.ABC):
@@ -44,86 +44,47 @@ class _LocalCatalog(_BasePhotometryCatalog, abc.ABC):
         return np.array(self._table[self.id_key])
 
     def _query_index(self, center=None, radius=None):
-        """Return the index of the points within a radius distance of center
-        point.
-
-        If center is None, return all
-        """
+        """Query all objects within radius."""
+        # If center is None, return all
         if center is None:
             return np.arange(0, len(self._table), 1)
 
         center = self._get_center(center)
         radius = self._get_radius(radius)
         coords = self.skycoords
+
+        # TODO: refactor using
         sep = coords.separation(center)
         filt = np.where(sep <= radius*u.degree)
         return filt
 
-    def query_ra_dec(self, center=None, radius=None):
-        """Query coordinates in a region of the catalog."""
-        filt = self._query_index(center, radius)
-        coords = self.skycoords
-        return coords.ra.degree[filt], coords.dec.degree[filt]
+    def query_object(self, center, radius=None):
+        """Query a single object in the catalog."""
+        obj = self._query_index(center, radius)
+        if obj is not None:
+            obj = obj[0]
+        return obj
 
-    def query_flux(self, center=None, radius=None):
-        """Query the flux data in a region of the catalog."""
-        filt = self._query_index(center, radius)
-        if self.flux_key is not None:
-            flux = np.array(self._table[self.flux_key][filt])
-        else:
-            flux = np.zeros(len(filt))
-            flux.fill(np.nan)
-        if self.flux_error_key is not None:
-            error = np.array(self._table[self.flux_error_key][filt])
-        else:
-            error = np.zeros(len(filt))
-            error.fill(np.nan)
-        return flux, error
-
-    def query_id(self, center=None, radius=None):
-        """Query coordinates in a region of the catalog."""
-        filt = self._query_index(center, radius)
-        return self.id[filt]
+    def query_region(self, center, radius):
+        """Query all objects in a region."""
+        return self._query_index(center, radius)
 
     def match_objects(self, ra, dec, limit_angle='2 arcsec'):
-        """Query the informations in the catalog from a list of ra and dec
-        coordinates, matching the stars by a limit_angle."""
-        rac, decc = self.query_ra_dec()
-
-        indx = match_indexes(ra, dec, rac, decc, limit_angle)
-
-        nstars = len(ra)
-        m_id = self.query_id()
-        m_id = np.array([m_id[i] if i != -1 else '' for i in indx])
-        m_ra, m_dec = self.query_ra_dec()
-        m_ra = np.array([m_ra[i] if i != -1 else np.nan for i in indx])
-        m_dec = np.array([m_dec[i] if i != -1 else np.nan for i in indx])
-        try:
-            flux, error = self.query_flux()
-            m_f = np.array([flux[i] if i != -1 else np.nan
-                            for i in indx])
-            m_e = np.array([error[i] if i != -1 else np.nan
-                            for i in indx])
-        except NotImplementedError:
-            m_f = np.zeros(nstars)
-            m_f.fill(np.nan)
-            m_e = np.zeros(nstars)
-            m_e.fill(np.nan)
-
-        return np.array(list(zip(m_id, m_ra, m_dec, m_f, m_e)),
-                        dtype=np.dtype([('id', m_id.dtype),
-                                        ('ra', m_ra.dtype),
-                                        ('dec', m_dec.dtype),
-                                        ('flux', m_f.dtype),
-                                        ('flux_error', m_e.dtype)]))
+        """Match objects from RA DEC list with this catalog."""
+        flux_keys = ['flux', 'flux_error']
+        table_props = [('id', ''), ('ra', np.nan), ('dec', np.nan),
+                       ('flux', np.nan), ('flux_error', np.nan)]
+        res = self._match_objects(ra, dec, None, limit_angle,
+                                  flux_keys, table_props)
+        return res
 
     def match_object_ids(self, ra, dec, limit_angle='2 arcsec'):
         return self.match_objects(ra, dec, limit_angle=limit_angle)['id']
 
 
 class TableCatalog(_LocalCatalog):
-    """Local catalog loaded from anything that can be converted directly to
-    an `~astropy.table.Table`."""
+    """Local catalog with any `~astropy.table.Table`compatible data."""
+
     type = 'local'
 
     def __init__(self, table, id_key=None, ra_key=None, dec_key=None,
@@ -144,6 +105,7 @@ class TableCatalog(_LocalCatalog):
 
 class ASCIICatalog(TableCatalog):
     """Local catalog read from a ASCII table file."""
+
     def __init__(self, filename, id_key=None, ra_key=None, dec_key=None,
                  flux_key=None, flux_error_key=None, flux_unit=None,
                  available_filters=None, prepend_id_key=False, bibcode=None,
@@ -156,7 +118,3 @@ class ASCIICatalog(TableCatalog):
         super().__init__(table, id_key, ra_key, dec_key, flux_key,
                          flux_error_key, flux_unit, available_filters,
                          prepend_id_key, bibcode)
-
-
-class FITSCatalog(ASCIICatalog):
-    """Local catalog read from a FITS table."""

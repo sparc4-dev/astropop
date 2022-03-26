@@ -5,7 +5,7 @@ from .vizier import VizierCatalogClass, \
                     UCAC4Catalog, UCAC5Catalog, GSC23Catalog, \
                     APASSCalatolg, DENISCatalog, TWOMASSCatalog
 from .simbad import SimbadCatalog, SimbadCatalogClass
-from .local import TableCatalog, ASCIICatalog, FITSCatalog
+from .local import TableCatalog, ASCIICatalog
 from .utils import identify_stars
 
 
