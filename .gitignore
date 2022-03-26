@@ -3,6 +3,7 @@ examples
 .pytest_cache
 .trash
 .env
+_old_*
 
 # Compiled files
 *.py[cod]
