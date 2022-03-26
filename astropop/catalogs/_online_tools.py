@@ -26,7 +26,7 @@ def _timeout_retry(func, *args, **kwargs):
     return q
 
 
-def _wrap_query_table(table):
+def _fix_query_table(table):
     """Fix bytes and objects columns to strings."""
     for i in table.columns:
         tdtype = table[i].dtype.char
