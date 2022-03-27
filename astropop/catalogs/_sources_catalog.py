@@ -46,7 +46,7 @@ class _SourceCatalogClass:
         self._setup_catalog()
 
         # perform the query
-        self._query()
+        self._do_query()
 
     @property
     def sources_id(self):
@@ -103,7 +103,7 @@ class _SourceCatalogClass:
     def _setup_catalog(self):
         """If a catalog setup is needed."""
 
-    def _query(self):
+    def _do_query(self):
         """Query the catalog."""
         raise NotImplementedError
 
@@ -136,15 +136,23 @@ class _SourceCatalogClass:
             `~astropy.coordinates.Angle` compatible. If float, it will be
             interpreted as a decimal degree.
         """
+        raise NotImplementedError
 
     def __getitem__(self, item):
         """Get items from the catalog.
 
         A new catalog with only the selected sources is returned.
+        If item is a string, a column from the result query will be returned.
         """
-        if not isinstance(item, (int, list, np.ndarray, slice)):
+        if isinstance(item, str):
+            return copy.copy(self._query[item])
+
+        if not isinstance(item, (int, list, np.ndarray, slice, str)):
             raise KeyError(f"{item}")
 
         nc = copy.copy(self)
-        nc._result = Table(self._result[item])
+        nc._query = Table(self._query[item])
         return nc
+
+    def __len__(self):
+        return len(self._query)

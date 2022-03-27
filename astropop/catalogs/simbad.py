@@ -5,7 +5,8 @@ from astropy.coordinates import SkyCoord
 from astroquery.simbad import Simbad
 from astropy import units as u
 
-from ._online_tools import _timeout_retry
+from ._sources_catalog import _SourceCatalogClass
+from ._online_tools import _timeout_retry, astroquery_query
 from ..py_utils import string_fix
 
 
@@ -59,3 +60,18 @@ def simbad_query_id(ra, dec, limit_angle, name_order=None):
                 if i+' ' in k:
                     return _strip_spaces(k)
     return None
+
+
+class SimbadSourcesCatalog(_SourceCatalogClass):
+    """Sources catalog from Simbad plataform."""
+
+    def _setup_catalog(self):
+        self._s = Simbad()
+        self._s.ROW_LIMIT = 0
+        if self._band is not None:
+            self._s.add_votable_fields(f'fluxdata({self._band})')
+
+    def _do_query(self):
+        self._query = astroquery_query(self._s.query_region,
+                                       self._center,
+                                       radius=self._radius)
