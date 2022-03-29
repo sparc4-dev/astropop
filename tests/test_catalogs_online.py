@@ -12,11 +12,10 @@ from astropop.catalogs._online_tools import _timeout_retry, \
                                             get_center_radius, \
                                             astroquery_radius, \
                                             astroquery_skycoord
+from astropop.math import QFloat
 
 from astropop.testing import assert_equal, assert_almost_equal, \
-                             assert_is_instance, assert_is_not, \
-                             assert_not_in, assert_in, assert_true, \
-                             assert_false
+                             assert_is_instance, assert_is_none
 from astroquery.simbad import Simbad
 
 
@@ -33,6 +32,7 @@ catalog_skip = pytest.mark.skipif(not os.environ.get('ASTROPOP_TEST_CATALOGS'),
 sirius_coords = ["Sirius", "06h45m09s -16d42m58s", [101.28715, -16.7161158],
                  np.array([101.28715, -16.7161158]), (101.28715, -16.7161158),
                  SkyCoord(101.28715, -16.7161158, unit=('degree', 'degree'))]
+search_radius = ['0.1d', '360s', '6m', 0.1, Angle('0.1d')]
 
 
 @flaky_rerun
@@ -140,3 +140,58 @@ class Test_Simbad():
             SimbadSourcesCatalog('Sirius', '0.05d', band='None')
         # Filter None should pass, no mag data
         SimbadSourcesCatalog('Sirius', '0.05d', None)
+
+    @pytest.mark.parametrize('radius', search_radius)
+    @pytest.mark.parametrize('center', sirius_coords)
+    def test_catalog_creation_params(self, center, radius):
+        s = SimbadSourcesCatalog(center, radius)
+        assert_equal(s.sources_id[0], '* alf CMa')
+        assert_almost_equal(s.ra_dec_list[0], [101.28715, -16.7161158], decimal=5)
+        assert_is_none(s.magnitude)
+
+    def test_catalog_creation_photometry(self):
+        s = SimbadSourcesCatalog(sirius_coords[0],
+                                 search_radius[0],
+                                 band='V')
+        assert_equal(s.sources_id[0], '* alf CMa')
+        assert_almost_equal(s.ra_dec_list[0], [101.28715, -16.7161158], decimal=5)
+        assert_almost_equal(s.mag_list[0][0], -1.46)
+
+    def test_catalog_properties_types(self):
+        s = SimbadSourcesCatalog(sirius_coords[0],
+                                 search_radius[0],
+                                 band='V')
+
+        assert_is_instance(s.sources_id, np.ndarray)
+        assert_equal(s.sources_id.shape, (len(s)))
+        assert_is_instance(s.skycoord, SkyCoord)
+        assert_is_instance(s.magnitude, QFloat)
+        assert_is_instance(s.ra_dec_list, np.ndarray)
+        assert_equal(s.ra_dec_list.shape, (len(s), 2))
+        assert_is_instance(s.mag_list, np.ndarray)
+        assert_equal(s.mag_list.shape, (len(s), 2))
+        assert_is_instance(s.center, SkyCoord)
+        assert_is_instance(s.radius, Angle)
+
+
+class Test_SimbadQueryID:
+    @pytest.mark.parametrize('order, expect', [(None, 'alf CMa'),
+                                               (['NAME'], 'Dog Star'),
+                                               (['*'], 'alf CMa'),
+                                               (['HIP'], 'HIP 32349'),
+                                               (['HIC', 'HD'], 'HIC 32349'),
+                                               (['NONE', 'HD'], 'HD 48915'),
+                                               (['UBV M', 'HD'],
+                                                'UBV M 12413')])
+    def test_simbad_query_id(self, order, expect):
+        idn = simbad_query_id(101.28715, -16.7161158, '5s', name_order=order)
+        assert_equal(idn, expect)
+
+    @pytest.mark.parametrize('coords,name', [((16.82590917, -72.4676825),
+                                              'HD 6884'),
+                                             ((86.46641167, -67.24053806),
+                                              'LHA 120-S 61')])
+    def test_simbad_query_id_non_default(self, coords, name):
+        order = ['NAME', 'HD', 'HR', 'HYP', 'AAVSO', 'LHA']
+        idn = simbad_query_id(*coords, '5s', name_order=order)
+        assert_equal(idn, name)

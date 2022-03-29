@@ -75,7 +75,14 @@ class _SourceCatalogClass:
 
     @property
     def magnitude(self):
+        """Get the sources magnitude in QFloat format."""
+        return copy.copy(self._mags)
+
+    @property
+    def mag_list(self):
         """Get the sources photometric mag in [(mag, mag_error)] format."""
+        if self._mags is None:
+            return
         return np.array(list(zip(self._mags.nominal,
                                  self._mags.uncertainty)))
 
