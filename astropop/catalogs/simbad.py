@@ -5,7 +5,6 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 from astroquery.simbad import Simbad
 from astropy import units as u
-from astropy.table import Table
 
 from ..math.physical import qfloat
 from ._sources_catalog import _SourceCatalogClass
