@@ -5,10 +5,4 @@ from .utils import identify_stars
 from .simbad import SimbadSourcesCatalog, simbad_query_id
 
 
-__all__ = ['identify_stars', 'catalogs_available']
-
-
-default_catalogs = {}
-
-
-catalogs_available = default_catalogs.keys()
+__all__ = ['identify_stars', 'SimbadSourcesCatalog', 'simbad_query_id']
