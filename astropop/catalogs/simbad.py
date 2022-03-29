@@ -6,16 +6,15 @@ from astropy.coordinates import SkyCoord
 from astroquery.simbad import Simbad
 from astropy import units as u
 
-from ..math.physical import qfloat
 from ._sources_catalog import _SourceCatalogClass
 from ._online_tools import _timeout_retry, astroquery_query
 from ..py_utils import string_fix
 
 
-__all__ = ['simbad_query_id']
+__all__ = ['simbad_query_id', 'SimbadSourcesCatalog']
 
 
-def simbad_query_id(ra, dec, limit_angle, name_order=None):
+def _simbad_query_id(ra, dec, limit_angle, name_order=None):
     """Query name ids for a star in Simbad.
 
     Parameters
@@ -64,6 +63,9 @@ def simbad_query_id(ra, dec, limit_angle, name_order=None):
     return None
 
 
+simbad_query_id = np.vectorize(_simbad_query_id, excluded=['limit_angle', 'name_order'])
+
+
 class SimbadSourcesCatalog(_SourceCatalogClass):
     """Sources catalog from Simbad plataform."""
 
@@ -83,14 +85,17 @@ class SimbadSourcesCatalog(_SourceCatalogClass):
                                        self._center,
                                        radius=self._radius,
                                        epoch='J2000')
-        self._ids = np.array([string_fix(i) for i in self._query['MAIN_ID']])
-        self._coords = SkyCoord(self._query['RA'], self._query['DEC'],
-                                unit=('hourangle', 'degree'),
-                                pm_ra_cosdec=self._query['PMRA'],
-                                pm_dec=self._query['PMDEC'],
-                                frame='icrs', obstime='J2000')
+        ids = np.array([string_fix(i) for i in self._query['MAIN_ID']])
         if self._band is not None:
-            b = self._band
-            self._mags = qfloat(self._query[f'FLUX_{b}'],
-                                uncertainty=self._query[f'FLUX_ERROR_{b}'],
-                                unit='mag')
+            mags = self._query[f'FLUX_{self._band}']
+            mags_error = self._query[f'FLUX_ERROR_{self._band}']
+        else:
+            mags = mags_error = None
+
+        self._set_values(ids=ids,
+                         ra=self._query['RA'], dec=self._query['DEC'],
+                         mag=mags, mag_error=mags_error,
+                         pm_ra=self._query['PMRA'],
+                         pm_dec=self._query['PMDEC'],
+                         frame='icrs', obstime='J2000',
+                         radec_unit=('hourangle', 'degree'))

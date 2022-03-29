@@ -4,7 +4,9 @@
 import copy
 import numpy as np
 from astropy.table import Table
+from astropy.coordinates import SkyCoord
 
+from ..math.physical import QFloat
 from ..logger import logger
 from ._online_tools import astroquery_radius, \
                            astroquery_skycoord
@@ -60,7 +62,7 @@ class _SourceCatalogClass:
     @property
     def sources_id(self):
         """Get the list of sources id in catalog."""
-        return self._get_id()
+        return copy.copy(self._ids)
 
     @property
     def skycoord(self):
@@ -88,30 +90,35 @@ class _SourceCatalogClass:
 
     @property
     def table(self):
-        """Soures id, coordinates and flux information in Table format."""
+        """Get the soures id, coordinates and flux in Table format."""
         sk = self.skycoord
         fl = self.magnitude
         t = Table({'id': self.sources_id,
                    'ra': sk.ra.degree,
                    'dec': sk.dec.degree,
-                   'mag': fl[:, 0],
-                   'mag_error': fl[:, 1]})
+                   'mag': fl.nominal,
+                   'mag_error': fl.uncertainty})
         return t
 
     @property
     def array(self):
-        """Soures id, coordinates and flux information in ndarray format."""
+        """Get the soures id, coordinates and flux in ndarray format."""
         return self.table.as_array()
 
     @property
     def center(self):
-        """Center of the catalog query, in SkyCoord format."""
+        """Get the center of the catalog query, in SkyCoord format."""
         return copy.copy(self._center)
 
     @property
     def radius(self):
-        """Radius of the catalog query, in Angle format."""
+        """Get the radius of the catalog query, in Angle format."""
         return copy.copy(self._radius)
+
+    @property
+    def band(self):
+        """Get the photometric filter/band used in the catalog."""
+        return str(self._band)
 
     def copy(self):
         """Copy the current catalog to a new instance."""
@@ -124,9 +131,42 @@ class _SourceCatalogClass:
         """Query the catalog."""
         raise NotImplementedError
 
-    def _get_id(self):
-        """Get id from the queried catalog."""
-        return copy.copy(self._ids)
+    def _set_values(self, ids, ra, dec, mag=None, mag_error=None,
+                    pm_ra=None, pm_dec=None, obstime=None,
+                    frame='icrs', radec_unit='deg', mag_unit='mag'):
+        """Set the values using proper types internally.
+
+        Parameters
+        ----------
+        ids: Sources identifier.
+        ra, dec: RA and DEC coordinates.
+        mag, mag_error:Photometric magnitude and error.
+        pm_ra, pm_dec: Proper motion. If None, no proper motion will be used.
+        obstime: Time of observation. To be used with proper motion.
+        frame: celestial frame of references of coordinates.
+        radec_unit: unit of RA and DEC coordinates.
+        mag_unit: unit of magnitudes
+        """
+        # IDs are stored in a numpy 1d-array
+        if len(np.shape(ids)) != 1:
+            raise ValueError('Sources ID must be a 1d array.')
+        self._ids = np.array(ids)
+
+        # coordinates are stored in SkyCoord format.
+        if pm_ra is not None and pm_dec is not None:
+            self._coords = SkyCoord(ra, dec, unit=radec_unit,
+                                    pm_ra_cosdec=pm_ra,
+                                    pm_dec=pm_dec,
+                                    obstime=obstime or 'J2000.0',
+                                    frame=frame)
+        else:
+            self._coords = SkyCoord(ra, dec, unit=radec_unit, frame=frame)
+
+        # magnitudes are stored as QFloat
+        if mag is not None:
+            self._mags = QFloat(mag, uncertainty=mag_error, unit=mag_unit)
+        else:
+            self._mags = None
 
     def get_coordinates(self, obstime=None):
         """Get the skycoord positions from the catalog."""
@@ -134,10 +174,6 @@ class _SourceCatalogClass:
             return self._coords.apply_space_motion(new_obstime=obstime)
         except ValueError:
             return copy.copy(self._coords)
-
-    def _get_mag(self):
-        """Get photometric magnituce from the catalog."""
-        return copy.copy(self._mags)
 
     def match_objects(self, ra, dec, limit_angle):
         """Match a list of ra, dec objects to this catalog.
