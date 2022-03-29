@@ -6,22 +6,46 @@ import pytest
 import numpy as np
 from astropy.table import Table
 from astropy.coordinates import SkyCoord, Angle
+from astropy import units as u
 from astropop.catalogs.simbad import SimbadSourcesCatalog, simbad_query_id
 from astropop.catalogs._online_tools import _timeout_retry, \
                                             _fix_query_table, \
                                             get_center_radius, \
                                             astroquery_radius, \
                                             astroquery_skycoord
+from astropop.catalogs._sources_catalog import _SourceCatalogClass
 from astropop.math import QFloat
 
 from astropop.testing import assert_equal, assert_almost_equal, \
-                             assert_is_instance, assert_is_none
-from astroquery.simbad import Simbad
+                             assert_is_instance, assert_is_none, \
+                             assert_true
 
 
 def delay_rerun(*args):
     time.sleep(10)
     return True
+
+
+class DummySourcesCatalog(_SourceCatalogClass):
+    sources = Table({'id': ['id1', 'id2', 'id3', 'id4'],
+                     'ra': np.random.random(size=4)*5,
+                     'dec': np.random.random(size=4)*5,
+                     'pm_ra': np.random.random(size=4)*300,
+                     'pm_dec': np.random.random(size=4)*300,
+                     'mag': np.random.random(size=4)*8,
+                     'mag_error': np.random.random(size=4)*0.1})
+    _available_filters = ['A', 'B']
+
+    def _do_query(self):
+        self._set_values(ids=self.sources['id'],
+                         ra=self.sources['ra'],
+                         dec=self.sources['dec'],
+                         mag=self.sources['mag'],
+                         mag_error=self.sources['mag_error'],
+                         pm_ra=self.sources['pm_ra']*u.Unit('mas/year'),
+                         pm_dec=self.sources['pm_dec']*u.Unit('mas/year'),
+                         obstime='J2005.0', frame='icrs', radec_unit='deg',
+                         mag_unit='mag')
 
 
 flaky_rerun = pytest.mark.flaky(max_runs=10, min_passes=1,
@@ -126,6 +150,72 @@ class Test_OnlineTools:
             astroquery_radius(not_angle)
 
 
+class Test_DummySourcesCatalog:
+    # Test things handled by the base catalog
+    def test_catalog_creation(self):
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0])
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0], band='B')
+
+        with pytest.raises(TypeError):
+            DummySourcesCatalog()
+
+        with pytest.raises(ValueError, match='Filter C not available.'):
+            DummySourcesCatalog(sirius_coords[0], search_radius[0], band='C')
+
+    @pytest.mark.parametrize('radius', search_radius)
+    @pytest.mark.parametrize('center', sirius_coords)
+    def test_catalog_center_radius(self, center, radius):
+        c = DummySourcesCatalog(center, radius, band='B')
+
+        assert_is_instance(c.center, SkyCoord)
+        assert_almost_equal(c.center.ra.degree, 101.287155, decimal=3)
+        assert_almost_equal(c.center.dec.degree, -16.7161158, decimal=3)
+
+        assert_is_instance(c.radius, Angle)
+        assert_almost_equal(c.radius.degree, 0.1)
+
+        assert_is_instance(c.band, str)
+        assert_equal(c.band, 'B')
+
+    def test_catalog_properties(self):
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0], band='B')
+        assert_is_instance(c.sources_id, np.ndarray)
+        assert_equal(c.sources_id.shape, (4))
+        assert_is_instance(c.skycoord, SkyCoord)
+        assert_is_instance(c.magnitude, QFloat)
+        assert_is_instance(c.ra_dec_list, np.ndarray)
+        assert_equal(c.ra_dec_list.shape, (4, 2))
+        assert_is_instance(c.mag_list, np.ndarray)
+        assert_equal(c.mag_list.shape, (4, 2))
+
+        assert_equal(c.sources_id, c.sources['id'])
+        assert_almost_equal(c.ra_dec_list[:, 0], c.sources['ra'])
+        assert_almost_equal(c.ra_dec_list[:, 1], c.sources['dec'])
+        assert_almost_equal(c.mag_list[:, 0], c.sources['mag'])
+        assert_almost_equal(c.mag_list[:, 1], c.sources['mag_error'])
+
+    def test_catalog_table(self):
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0], band='B')
+        t = c.table
+        assert_is_instance(t, Table)
+        assert_equal(t.colnames, ['id', 'ra', 'dec', 'mag', 'mag_error'])
+        assert_equal(t['id'], c.sources['id'])
+        assert_almost_equal(t['ra'], c.sources['ra'])
+        assert_almost_equal(t['dec'], c.sources['dec'])
+        assert_almost_equal(t['mag'], c.sources['mag'])
+        assert_almost_equal(t['mag_error'], c.sources['mag_error'])
+
+    def test_catalog_array(self):
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0], band='B')
+        t = c.array
+        assert_is_instance(t, np.ndarray)
+        assert_equal(t['id'], c.sources['id'])
+        assert_almost_equal(t['ra'], c.sources['ra'])
+        assert_almost_equal(t['dec'], c.sources['dec'])
+        assert_almost_equal(t['mag'], c.sources['mag'])
+        assert_almost_equal(t['mag_error'], c.sources['mag_error'])
+
+
 @flaky_rerun
 @catalog_skip
 class Test_Simbad():
@@ -141,13 +231,21 @@ class Test_Simbad():
         # Filter None should pass, no mag data
         SimbadSourcesCatalog('Sirius', '0.05d', None)
 
+
     @pytest.mark.parametrize('radius', search_radius)
     @pytest.mark.parametrize('center', sirius_coords)
     def test_catalog_creation_params(self, center, radius):
         s = SimbadSourcesCatalog(center, radius)
         assert_equal(s.sources_id[0], '* alf CMa')
-        assert_almost_equal(s.ra_dec_list[0], [101.28715, -16.7161158], decimal=5)
+        assert_almost_equal(s.ra_dec_list[0], [101.287155, -16.7161158], decimal=5)
         assert_is_none(s.magnitude)
+
+        assert_is_instance(s.center, SkyCoord)
+        assert_almost_equal(s.center.ra.degree, 101.287155, decimal=3)
+        assert_almost_equal(s.center.dec.degree, -16.7161158, decimal=3)
+
+        assert_is_instance(s.radius, Angle)
+        assert_almost_equal(s.radius.degree, 0.1)
 
     def test_catalog_creation_photometry(self):
         s = SimbadSourcesCatalog(sirius_coords[0],
@@ -170,8 +268,20 @@ class Test_Simbad():
         assert_equal(s.ra_dec_list.shape, (len(s), 2))
         assert_is_instance(s.mag_list, np.ndarray)
         assert_equal(s.mag_list.shape, (len(s), 2))
-        assert_is_instance(s.center, SkyCoord)
-        assert_is_instance(s.radius, Angle)
+
+    def test_catalog_properties_table(self):
+        s = SimbadSourcesCatalog(sirius_coords[0],
+                                 search_radius[0],
+                                 band='V')
+        t = s.table
+        assert_is_instance(t, Table)
+        assert_equal(len(t), len(s))
+        assert_equal(t.colnames, ['id', 'ra', 'dec', 'mag', 'mag_error'])
+        assert_equal(t['id'][0], '* alf CMa')
+        assert_almost_equal(t['ra'][0], 101.287155)
+        assert_almost_equal(t['dec'][0], -16.7161158)
+        assert_almost_equal(t['mag'][0], -1.46, decimal=2)
+        assert_true(np.isnan(t['mag_error'][0]))
 
 
 class Test_SimbadQueryID:
@@ -195,3 +305,10 @@ class Test_SimbadQueryID:
         order = ['NAME', 'HD', 'HR', 'HYP', 'AAVSO', 'LHA']
         idn = simbad_query_id(*coords, '5s', name_order=order)
         assert_equal(idn, name)
+
+    def test_simbad_query_id_multiple(self):
+        ra = [101.28715, 88.79293875, 191.93028625]
+        dec = [-16.7161158, 7.40706389, -59.68877194]
+        name = ['alf CMa', 'alf Ori', 'bet Cru']
+        res = simbad_query_id(ra, dec, '2s')
+        assert_equal(res, name)
