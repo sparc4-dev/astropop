@@ -2,10 +2,8 @@
 """Base classes for astronomical catalogs queries."""
 
 import copy
-import abc
 import numpy as np
 from astropy.table import Table
-from astropy.coordinates import Angle, SkyCoord, match_coordinates_sky
 
 from ..logger import logger
 from ._online_tools import astroquery_radius, \
@@ -53,6 +51,10 @@ class _SourceCatalogClass:
         self._setup_catalog()
 
         # perform the query
+        logger.info('Quering region centered at %s with radius %s',
+                    self._center, self._radius)
+        logger.info('Using %s filter for photometry information.',
+                    self._band)
         self._do_query()
 
     @property
