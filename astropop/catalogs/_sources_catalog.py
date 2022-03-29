@@ -15,7 +15,12 @@ from ._online_tools import astroquery_radius, \
 class _SourceCatalogClass:
     """Store and manipulate catalogs of astronomical sources."""
 
-    def __init__(self, center, radius, band=None, **kwargs):
+    _coords = None
+    _ids = None
+    _mags = None
+    _query = None
+
+    def __init__(self, center, radius, band=None):
         """Query the catalog and create the source catalog instance.
 
         Parameters
@@ -35,11 +40,13 @@ class _SourceCatalogClass:
         band: string (optional)
             For catalogs with photometric information with multiple filters,
             the desired filter must be passed here.
-        ** kwargs
-            other arguments to be passed to the catalog functions.
+            Default: None
         """
         self._center = astroquery_skycoord(center)
         self._radius = astroquery_radius(radius)
+        if band is not None and band not in self._available_filters:
+            raise ValueError(f'Filter {band} not available. Default '
+                             f'filters are {self._available_filters}.')
         self._band = band
 
         # setup the catalog if needed
@@ -56,39 +63,36 @@ class _SourceCatalogClass:
     @property
     def skycoord(self):
         """Get the sources coordinates in SkyCoord format."""
-        return self._get_skycoord()
+        return self.get_coordinates()
 
     @property
     def ra_dec_list(self):
         """Get the sources coordinates in [(ra, dec)] format."""
         sk = self.skycoord
-        return list(zip(sk.ra.degree, sk.dec.degree))
-
-    @property
-    def flux(self):
-        """Get the sources fluxes in [(flux, flux_error)] format."""
-        return self._get_flux()
+        return np.array(list(zip(sk.ra.degree, sk.dec.degree)))
 
     @property
     def magnitude(self):
         """Get the sources photometric mag in [(mag, mag_error)] format."""
+        return np.array(list(zip(self._mags.nominal,
+                                 self._mags.uncertainty)))
 
     @property
     def table(self):
         """Soures id, coordinates and flux information in Table format."""
         sk = self.skycoord
-        fl = self.flux
+        fl = self.magnitude
         t = Table({'id': self.sources_id,
                    'ra': sk.ra.degree,
                    'dec': sk.dec.degree,
-                   'flux': fl[:][0],
-                   'flux_error': fl[:][1]})
+                   'mag': fl[:, 0],
+                   'mag_error': fl[:, 1]})
         return t
 
     @property
     def array(self):
         """Soures id, coordinates and flux information in ndarray format."""
-        self.table.as_array()
+        return self.table.as_array()
 
     @property
     def center(self):
@@ -100,6 +104,10 @@ class _SourceCatalogClass:
         """Radius of the catalog query, in Angle format."""
         return copy.copy(self._radius)
 
+    def copy(self):
+        """Copy the current catalog to a new instance."""
+        return copy.copy(self)
+
     def _setup_catalog(self):
         """If a catalog setup is needed."""
 
@@ -109,19 +117,18 @@ class _SourceCatalogClass:
 
     def _get_id(self):
         """Get id from the queried catalog."""
-        raise NotImplementedError
+        return copy.copy(self._ids)
 
-    def _get_skycoord(self):
+    def get_coordinates(self, obstime=None):
         """Get the skycoord positions from the catalog."""
-        raise NotImplementedError
-
-    def _get_flux(self):
-        """Get flux informations from the catalog."""
-        raise NotImplementedError
+        try:
+            return self._coords.apply_space_motion(new_obstime=obstime)
+        except ValueError:
+            return copy.copy(self._coords)
 
     def _get_mag(self):
         """Get photometric magnituce from the catalog."""
-        raise NotImplementedError
+        return copy.copy(self._mags)
 
     def match_objects(self, ra, dec, limit_angle):
         """Match a list of ra, dec objects to this catalog.
@@ -145,14 +152,20 @@ class _SourceCatalogClass:
         If item is a string, a column from the result query will be returned.
         """
         if isinstance(item, str):
+            if self._query is None:
+                raise KeyError('Empty query')
             return copy.copy(self._query[item])
 
         if not isinstance(item, (int, list, np.ndarray, slice, str)):
             raise KeyError(f"{item}")
 
         nc = copy.copy(self)
-        nc._query = Table(self._query[item])
+        nc._query = None
+        nc._coords = self._coords[item]
+        nc._ids = self._ids[item]
+        if self._mags is not None:
+            nc._mags = self._mags[item]
         return nc
 
     def __len__(self):
-        return len(self._query)
+        return len(self.sources_id)

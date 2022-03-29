@@ -1,10 +1,13 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 """Query and match objects in Vizier catalogs."""
 
+import numpy as np
 from astropy.coordinates import SkyCoord
 from astroquery.simbad import Simbad
 from astropy import units as u
+from astropy.table import Table
 
+from ..math.physical import qfloat
 from ._sources_catalog import _SourceCatalogClass
 from ._online_tools import _timeout_retry, astroquery_query
 from ..py_utils import string_fix
@@ -65,13 +68,30 @@ def simbad_query_id(ra, dec, limit_angle, name_order=None):
 class SimbadSourcesCatalog(_SourceCatalogClass):
     """Sources catalog from Simbad plataform."""
 
+    _available_filters = ['B', 'V', 'R', 'I', 'J', 'H', 'K',
+                          'u', 'g', 'r', 'i', 'z']
+
     def _setup_catalog(self):
         self._s = Simbad()
+        self._s.add_votable_fields('pm')
         self._s.ROW_LIMIT = 0
         if self._band is not None:
             self._s.add_votable_fields(f'fluxdata({self._band})')
 
     def _do_query(self):
+        # We query everything in J2000 and query propermotion too
         self._query = astroquery_query(self._s.query_region,
                                        self._center,
-                                       radius=self._radius)
+                                       radius=self._radius,
+                                       epoch='J2000')
+        self._ids = np.array([string_fix(i) for i in self._query['MAIN_ID']])
+        self._coords = SkyCoord(self._query['RA'], self._query['DEC'],
+                                unit=('hourangle', 'degree'),
+                                pm_ra_cosdec=self._query['PMRA'],
+                                pm_dec=self._query['PMDEC'],
+                                frame='icrs', obstime='J2000')
+        if self._band is not None:
+            b = self._band
+            self._mags = qfloat(self._query[f'FLUX_{b}'],
+                                uncertainty=self._query[f'FLUX_ERROR_{b}'],
+                                unit='mag')
