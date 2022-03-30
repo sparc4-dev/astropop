@@ -292,12 +292,3 @@ class _SourceCatalogClass:
 
     def __len__(self):
         return len(self._coords.ra.degree)
-
-    def __copy__(self):
-        cls = _SourceCatalogClass.__new__(_SourceCatalogClass)
-        cls._band = self._band
-        cls._center = self._center
-        cls._radius = self._radius
-        cls._ids = self._ids
-        cls._mags = self._mags
-        cls._coords = self._coords
