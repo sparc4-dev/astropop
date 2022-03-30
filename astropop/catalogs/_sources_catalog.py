@@ -141,12 +141,18 @@ class _SourceCatalogClass:
     def table(self):
         """Get the soures id, coordinates and flux in Table format."""
         sk = self.skycoord
-        fl = self.magnitude
-        t = Table({'id': self.sources_id,
-                   'ra': sk.ra.degree,
-                   'dec': sk.dec.degree,
-                   'mag': fl.nominal,
-                   'mag_error': fl.uncertainty})
+        if self.magnitude is None:
+            t = Table({'id': self.sources_id,
+                       'ra': sk.ra.degree,
+                       'dec': sk.dec.degree})
+        else:
+            fl = self.magnitude
+            t = Table({'id': self.sources_id,
+                       'ra': sk.ra.degree,
+                       'dec': sk.dec.degree,
+                       'mag': fl.nominal,
+                       'mag_error': fl.uncertainty})
+
         return t
 
     @property

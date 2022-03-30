@@ -292,6 +292,13 @@ class Test_DummySourcesCatalog:
         for k in ['ra', 'dec', 'mag', 'mag_error']:
             assert_almost_equal(m[k], expect[k])
 
+    def test_catalog_empty_mag(self):
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0], band='B')
+        c._mags = None
+        assert_is_none(c.magnitude)
+        assert_is_none(c.mag_list)
+        assert_equal(c.table.colnames, ['id', 'ra', 'dec'])
+
 
 @flaky_rerun
 @catalog_skip
