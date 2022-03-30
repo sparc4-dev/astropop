@@ -264,6 +264,34 @@ class Test_DummySourcesCatalog:
         with pytest.raises(TypeError):
             len(c[0])
 
+    def test_catalog_match_objects(self):
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0], band='B')
+        m = c.match_objects([0.52525258, 0.87265989, 4.16526547],
+                            [3.65404807, 5.50588171, 3.80703142],
+                            limit_angle='1 arcsec')
+        assert_is_instance(m, _SourceCatalogClass)
+        assert_equal(m.sources_id, ['id2', '', 'id4'])
+        assert_almost_equal(m.ra_dec_list[:, 0], [0.52522258, np.nan, 4.16520547])
+        assert_almost_equal(m.ra_dec_list[:, 1], [3.65404807, np.nan, 3.80703142])
+        assert_almost_equal(m.mag_list[:, 0], [3.00, np.nan, 4.81], decimal=2)
+        assert_almost_equal(m.mag_list[:, 1], [0.02, np.nan, 0.03], decimal=2)
+
+    def test_catalog_match_objects_table(self):
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0], band='B')
+        m = c.match_objects([0.52525258, 0.87265989, 4.16526547],
+                            [3.65404807, 5.50588171, 3.80703142],
+                            limit_angle='1 arcsec',
+                            table=True)
+        assert_is_instance(m, Table)
+        expect = Table({'id': ['id2', '', 'id4'],
+                        'ra': [0.52522258, np.nan, 4.16520547],
+                        'dec': [3.65404807, np.nan, 3.80703142],
+                        'mag': [3.00, np.nan, 4.81],
+                        'mag_error': [0.02, np.nan, 0.03]})
+        assert_equal(m['id'], expect['id'])
+        for k in ['ra', 'dec', 'mag', 'mag_error']:
+            assert_almost_equal(m[k], expect[k])
+
 
 @flaky_rerun
 @catalog_skip

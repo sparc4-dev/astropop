@@ -247,7 +247,7 @@ class _SourceCatalogClass:
         cat_sk = self.get_coordinates(obstime=obstime)
         indexes = _match_indexes(ra, dec, cat_sk, astroquery_radius(limit_angle))
         length = len(ra)
-        ids = ['']*len(length)
+        ids = ['']*length
         nra = np.full(length, fill_value=np.nan, dtype='f8')
         ndec = np.full(length, fill_value=np.nan, dtype='f8')
         mags = np.full(length, fill_value=np.nan, dtype='f8')
@@ -265,8 +265,7 @@ class _SourceCatalogClass:
         ncat._set_values(ids, nra, ndec, mags, mags_error, obstime=obstime)
         if table:
             return ncat.table
-        else:
-            return ncat
+        return ncat
 
     def __getitem__(self, item):
         """Get items from the catalog.
