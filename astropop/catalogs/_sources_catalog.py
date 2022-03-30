@@ -10,7 +10,6 @@ from ..math.physical import QFloat
 from ..logger import logger
 from ._online_tools import astroquery_radius, \
                            astroquery_skycoord
-from ..py_utils import check_iterable
 
 
 class _SourceCatalogClass:
