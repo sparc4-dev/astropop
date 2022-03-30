@@ -46,6 +46,7 @@ class DummySourcesCatalog(_SourceCatalogClass):
                          pm_dec=self.sources['pm_dec']*u.Unit('mas/year'),
                          obstime='J2005.0', frame='icrs', radec_unit='deg',
                          mag_unit='mag')
+        self._query = Table(self.sources)
 
 
 flaky_rerun = pytest.mark.flaky(max_runs=10, min_passes=1,
@@ -215,6 +216,54 @@ class Test_DummySourcesCatalog:
         assert_almost_equal(t['mag'], c.sources['mag'])
         assert_almost_equal(t['mag_error'], c.sources['mag_error'])
 
+    def test_catalog_getitem_number(self):
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0], band='B')
+        nc = c[0]
+        assert_equal(nc.sources_id, c.sources['id'][0])
+        assert_almost_equal(nc.ra_dec_list,
+                            [c.sources['ra'][0], c.sources['dec'][0]])
+        assert_almost_equal(nc.mag_list,
+                            [c.sources['mag'][0], c.sources['mag_error'][0]])
+
+    def test_catalog_getitem_array(self):
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0], band='B')
+        for items in [[2, 3], slice(2, None), np.array([2, 3])]:
+            nc = c[items]
+            assert_equal(len(nc), 2)
+            assert_equal(nc.sources_id, c.sources['id'][2:])
+            assert_almost_equal(nc.ra_dec_list[:, 0], c.sources['ra'][2:])
+            assert_almost_equal(nc.ra_dec_list[:, 1], c.sources['dec'][2:])
+            assert_almost_equal(nc.mag_list[:, 0], c.sources['mag'][2:])
+            assert_almost_equal(nc.mag_list[:, 1], c.sources['mag_error'][2:])
+            assert_is_none(nc._query)
+
+        # Ensure error is raised when a list of strings
+        with pytest.raises(KeyError):
+            c['id', 'ra']
+
+        with pytest.raises(KeyError):
+            c[(2, 3)]
+
+    def test_catalog_getitem_columns(self):
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0], band='B')
+        for i in c.sources.colnames:
+            assert_equal(c[i], c.sources[i])
+
+        with pytest.raises(KeyError):
+            c['no column']
+
+    def test_catalog_getitem_emptyquery(self):
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0], band='B')
+        nc = c[[1, 2]]
+        with pytest.raises(KeyError, match='Empty query.'):
+            nc['id']
+
+    def test_catalog_len(self):
+        c = DummySourcesCatalog(sirius_coords[0], search_radius[0], band='B')
+        assert_equal(len(c), 4)
+        with pytest.raises(TypeError):
+            len(c[0])
+
 
 @flaky_rerun
 @catalog_skip
@@ -230,7 +279,6 @@ class Test_Simbad():
             SimbadSourcesCatalog('Sirius', '0.05d', band='None')
         # Filter None should pass, no mag data
         SimbadSourcesCatalog('Sirius', '0.05d', None)
-
 
     @pytest.mark.parametrize('radius', search_radius)
     @pytest.mark.parametrize('center', sirius_coords)

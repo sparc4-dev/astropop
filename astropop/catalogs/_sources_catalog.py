@@ -10,6 +10,7 @@ from ..math.physical import QFloat
 from ..logger import logger
 from ._online_tools import astroquery_radius, \
                            astroquery_skycoord
+from ..py_utils import check_iterable
 
 
 class _SourceCatalogClass:
@@ -73,7 +74,10 @@ class _SourceCatalogClass:
     def ra_dec_list(self):
         """Get the sources coordinates in [(ra, dec)] format."""
         sk = self.skycoord
-        return np.array(list(zip(sk.ra.degree, sk.dec.degree)))
+        try:
+            return np.array(list(zip(sk.ra.degree, sk.dec.degree)))
+        except TypeError:
+            return (sk.ra.degree, sk.dec.degree)
 
     @property
     def magnitude(self):
@@ -85,8 +89,11 @@ class _SourceCatalogClass:
         """Get the sources photometric mag in [(mag, mag_error)] format."""
         if self._mags is None:
             return
-        return np.array(list(zip(self._mags.nominal,
-                                 self._mags.uncertainty)))
+        try:
+            return np.array(list(zip(self._mags.nominal,
+                                     self._mags.uncertainty)))
+        except TypeError:
+            return (self._mags.nominal, self._mags.uncertainty)
 
     @property
     def table(self):
@@ -198,10 +205,10 @@ class _SourceCatalogClass:
         """
         if isinstance(item, str):
             if self._query is None:
-                raise KeyError('Empty query')
+                raise KeyError('Empty query.')
             return copy.copy(self._query[item])
 
-        if not isinstance(item, (int, list, np.ndarray, slice, str)):
+        if not isinstance(item, (int, list, np.ndarray, slice)):
             raise KeyError(f"{item}")
 
         nc = copy.copy(self)
@@ -213,4 +220,4 @@ class _SourceCatalogClass:
         return nc
 
     def __len__(self):
-        return len(self.sources_id)
+        return len(self._coords.ra.degree)
