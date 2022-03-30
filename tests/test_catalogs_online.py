@@ -28,12 +28,12 @@ def delay_rerun(*args):
 
 class DummySourcesCatalog(_SourceCatalogClass):
     sources = Table({'id': ['id1', 'id2', 'id3', 'id4'],
-                     'ra': np.random.random(size=4)*5,
-                     'dec': np.random.random(size=4)*5,
-                     'pm_ra': np.random.random(size=4)*300,
-                     'pm_dec': np.random.random(size=4)*300,
-                     'mag': np.random.random(size=4)*8,
-                     'mag_error': np.random.random(size=4)*0.1})
+                     'ra': [2.44644404, 0.52522258, 0.64638169, 4.16520547],
+                     'dec': [4.92305031, 3.65404807, 4.50588171, 3.80703142],
+                     'pm_ra': [278.6, 114.3, 8.6, 270.1],
+                     'pm_dec': [25.7, 202.6, 122.3, 256.3],
+                     'mag': [2.16, 3.00, 3.55, 4.81],
+                     'mag_error': [0.01, 0.02, 0.01, 0.03]})
     _available_filters = ['A', 'B']
 
     def _do_query(self):
