@@ -4,12 +4,55 @@
 import copy
 import numpy as np
 from astropy.table import Table
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, match_coordinates_sky, Angle
 
 from ..math.physical import QFloat
 from ..logger import logger
 from ._online_tools import astroquery_radius, \
                            astroquery_skycoord
+
+
+def _match_indexes(ra, dec, cat_skycoords, limit_angle):
+    """Match list of coordinates with a calatog.
+
+    Parameters
+    ----------
+    ra, dec: list of float
+        List of objects coordinates to be matched in the catalog. All
+        coordinates must be in decimal degrees.
+    cat_ra, cat_dec: list of float
+        List of catalog coordinates. All coordinates must be in decimal
+        degrees.
+    limit_angle: string, float, `~astropy.coordinates.Angle`
+        Angle limit for matching indexes. If string, if must be
+        `~astropy.coordinates.Angle` compatible. If float, it will be
+        interpreted as a decimal degree.
+    logger: `~logging.Logger`
+
+    Returns
+    -------
+    index: `~numpy.ndarray`
+        List containing the indexes in the catalog that matched the object
+        coordinates. If -1, it represents objects not matched.
+    """
+    # # Matching using astropy's skycoord can be slow for big catalogs
+    ind, dist, _ = match_coordinates_sky(SkyCoord(ra, dec, unit=('degree',
+                                                                 'degree'),
+                                                  frame='icrs'),
+                                         cat_skycoords)
+
+    index = np.zeros(len(ra), dtype=np.int)
+    index.fill(-1)   # a nan index
+
+    lim = Angle(limit_angle)
+    for k in range(len(ra)):
+        if dist[k] <= lim:
+            index[k] = ind[k]
+
+    logger.debug('Matched %s objects in catalog from %s total',
+                 np.sum(index != -1), len(ra))
+
+    return index
 
 
 class _SourceCatalogClass:
@@ -181,7 +224,7 @@ class _SourceCatalogClass:
         except ValueError:
             return copy.copy(self._coords)
 
-    def match_objects(self, ra, dec, limit_angle):
+    def match_objects(self, ra, dec, limit_angle, obstime=None, table=False):
         """Match a list of ra, dec objects to this catalog.
 
         Parameters
@@ -193,8 +236,37 @@ class _SourceCatalogClass:
             Angle limit for matching indexes. If string, if must be
             `~astropy.coordinates.Angle` compatible. If float, it will be
             interpreted as a decimal degree.
+        obstime: `~astropy.time.Time` (optional)
+            Observation time. If passed, it will be used to apply the proper
+            motion to the coordinates, if available.
+            Default: None
+        table: bool (optional)
+            Return a table instead a source catalog.
+            Default: False
         """
-        raise NotImplementedError
+        cat_sk = self.get_coordinates(obstime=obstime)
+        indexes = _match_indexes(ra, dec, cat_sk, astroquery_radius(limit_angle))
+        length = len(ra)
+        ids = ['']*len(length)
+        nra = np.full(length, fill_value=np.nan, dtype='f8')
+        ndec = np.full(length, fill_value=np.nan, dtype='f8')
+        mags = np.full(length, fill_value=np.nan, dtype='f8')
+        mags_error = np.full(length, fill_value=np.nan, dtype='f8')
+
+        for i, v in enumerate(indexes):
+            if v != -1:
+                ids[i] = self._ids[v]
+                nra[i] = cat_sk.ra.degree[v]
+                ndec[i] = cat_sk.dec.degree[v]
+                mags[i] = self._mags.nominal[v]
+                mags_error[i] = self._mags.uncertainty[v]
+
+        ncat = _SourceCatalogClass.__new__(_SourceCatalogClass)
+        ncat._set_values(ids, nra, ndec, mags, mags_error, obstime=obstime)
+        if table:
+            return ncat.table
+        else:
+            return ncat
 
     def __getitem__(self, item):
         """Get items from the catalog.
@@ -220,3 +292,12 @@ class _SourceCatalogClass:
 
     def __len__(self):
         return len(self._coords.ra.degree)
+
+    def __copy__(self):
+        cls = _SourceCatalogClass.__new__(_SourceCatalogClass)
+        cls._band = self._band
+        cls._center = self._center
+        cls._radius = self._radius
+        cls._ids = self._ids
+        cls._mags = self._mags
+        cls._coords = self._coords
