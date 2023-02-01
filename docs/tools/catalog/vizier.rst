@@ -101,7 +101,7 @@ To configure a new catalog, you can use a `YAML <https://yaml.org/>`_ configure 
 .. code-block:: yaml
 
     ---
-    # caralog table in vizier
+    # catalog table in vizier
     table: 'I/322A/out'
     # small description for the catalog
     description: "UCAC4 Catalogue (Zacharias+, 2012)"
