@@ -43,7 +43,9 @@ dependencies = [
     "astroalign",
     "tqdm",
     "nest-asyncio",
-    "dbastable"
+    "dbastable",
+    "sep_pjw; python_version>='3.9'",
+    "sep; python_version<'3.9'",
 ]
 
 [project.optional-dependencies]
