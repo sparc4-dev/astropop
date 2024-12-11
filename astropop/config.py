@@ -7,11 +7,11 @@ class AstropopConfig:
 
     Attributes
     ----------
-    FRAMEDATA_SKIP_UNCERTAINTY : bool
+    FRAMEDATA_DISABLE_UNCERTAINTY : bool
         If True, all FrameData uncertainty set will be disabled completely,
         reducing memory usage.
         Default is False.
-    FRAMEDATA_SKIP_FLAGS : bool
+    FRAMEDATA_DISABLE_FLAGS : bool
         If True, all FrameData flags and masks set will be disabled completely
         reducing memory usage.
     IMARITH_SKIP_UNCERTAINTY : bool
@@ -21,5 +21,5 @@ class AstropopConfig:
         Default is False.
     """
     IMARITH_SKIP_UNCERTAINTY = False
-    FRAMEDATA_SKIP_UNCERTAINTY = False
-    FRAMEDATA_SKIP_FLAGS = False
+    FRAMEDATA_DISABLE_UNCERTAINTY = False
+    FRAMEDATA_DISABLE_FLAGS = False
