@@ -30,6 +30,8 @@ jobs:
           cache-key: ${{ github.ref }}-py311lin-astropycache
         - linux: py312-test-online
           cache-key: ${{ github.ref }}-py312lin-astropycache
+        - linux: py313-test-online
+          cache-key: ${{ github.ref }}-py313lin-astropycache
 
   build_docs:
     uses: OpenAstronomy/github-actions-workflows/.github/workflows/tox.yml@v1
