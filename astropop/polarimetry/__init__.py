@@ -1,10 +1,15 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 """Compute polarimetry of dual beam polarimeters images."""
 
+from __future__ import annotations
+
+import typing as _t
+import numpy.typing as _npt
+from .._typing import NumberArray as _NumberArray, QuantityInput as _QuantityInput
+
 import abc
 import numpy as np
 from dataclasses import dataclass, field
-from typing import List
 from astropy.table import Table
 from scipy.spatial import cKDTree
 from scipy.optimize import curve_fit
@@ -20,7 +25,7 @@ __all__ = ['estimate_dxdy', 'match_pairs',
            'SLSDualBeamPolarimetry', 'StokesParameters']
 
 
-def _compute_theta(q, u):
+def _compute_theta(q: _QuantityInput, u: _QuantityInput) -> QFloat | units.Quantity:
     """Compute theta using Q and U, considering quadrants and max 180 value."""
     # numpy arctan2 already looks for quadrants and is defined in [-pi, pi]
     theta = np.degrees(0.5*np.arctan2(u, q))
@@ -32,7 +37,13 @@ def _compute_theta(q, u):
     return theta
 
 
-def estimate_dxdy(x, y, steps=[100, 30, 5, 3], bins=30, dist_limit=100):
+def estimate_dxdy(
+    x: _npt.ArrayLike,
+    y: _npt.ArrayLike,
+    steps: _t.Sequence[int]=[100, 30, 5, 3],
+    bins: int=30,
+    dist_limit: float=100,
+) -> tuple[float, float]:
     """Estimate the displacement between the two beams.
 
     To compute the displacement between the ordinary and extraordinary
@@ -41,21 +52,44 @@ def estimate_dxdy(x, y, steps=[100, 30, 5, 3], bins=30, dist_limit=100):
 
     Parameters
     ----------
-    x, y: array_like
+    x, y
         Arrays of x and y positions of the sources.
-    steps: list of int
+    steps
         Number of pixels, around the mode, to clip the histogram in each step.
-    bins: int
+    bins
         Number of bins to use in the histogram.
-    dist_limit: float
+    dist_limit
         Maximum distance between the pairs of sources to consider.
 
     Return
     ------
-    dx, dy: float
-        Displacement between the ordinary and extraordinary beams.
+    dx, dy
+        Histogram-mode pixel differences x[i]-x[j], y[i]-y[j], using pairs
+        with y[j] > y[i]. The y displacement is therefore negative. Pass
+        these values to ``match_pairs`` and identify physical beams from
+        the instrument convention, not the displacement sign.
+
+    Notes
+    -----
+    The function constructs all detection pairs before filtering, requiring
+    storage that grows quadratically with the number of detections.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from astropop.polarimetry import estimate_dxdy
+    >>> rng = np.random.default_rng(42)
+    >>> base_x, base_y = rng.uniform(0, 950, (2, 20))
+    >>> x = np.concatenate((base_x, base_x + 25))
+    >>> y = np.concatenate((base_y, base_y + 35))
+
+    >>> # Repeated offsets identify the two-beam displacement among unrelated pairs.
+    >>> dx, dy = estimate_dxdy(x, y, dist_limit=50, steps=[50, 5, 3, 1], bins=100)
+    >>> print(f'{dx:.1f}, {dy:.1f} pixels')
+    -25.0, -35.0 pixels
     """
-    def _find_max(d):
+    def _find_max(d: _npt.ArrayLike) -> float:
+        """Refine the peak displacement using successively narrower histograms."""
         dx = 0
         for lim in (np.max(d), *steps):
             lo, hi = (dx-lim, dx+lim)
@@ -86,7 +120,13 @@ def estimate_dxdy(x, y, steps=[100, 30, 5, 3], bins=30, dist_limit=100):
     return (_find_max(dx), _find_max(dy))
 
 
-def match_pairs(x, y, dx, dy, tolerance=1.0):
+def match_pairs(
+    x: _npt.ArrayLike,
+    y: _npt.ArrayLike,
+    dx: float,
+    dy: float,
+    tolerance: float=1.0,
+) -> _npt.NDArray:
     """Match the pairs of ordinary/extraordinary points (x, y).
 
     This function matches the pairs of ordinary and extraordinary points
@@ -94,19 +134,36 @@ def match_pairs(x, y, dx, dy, tolerance=1.0):
 
     Parameters
     ----------
-    x, y: array_like
+    x, y
         Arrays of x and y positions of the sources.
-    dx, dy: float
-        Displacement between the ordinary and extraordinary beams.
-    tolerance: float
-        Tolerance for the matching.
+    dx, dy
+        Pixel displacement: search for a neighbor at (x-dx, y-dy) for
+        every supplied detection.
+    tolerance
+        Maximum Euclidean distance in pixels from the predicted neighbor.
 
     Return
     ------
     `numpy.ndarray`:
-        Array of the indexes of the matched pairs. Column 'o' contains the
-        indexes of the ordinary points, column 'e' the indexes of the
-        extraordinary points.
+        Structured array of indices into the input positions. Field 'o'
+        contains the starting detection, and 'e' its matched neighbor.
+        These geometric labels do not establish physical beam identity.
+
+    Notes
+    -----
+    Independent nearest-neighbor queries do not enforce unique assignments.
+    Check reused neighbors in crowded fields before extracting beam fluxes.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from astropop.polarimetry import match_pairs
+    >>> x, y = np.array([10., 35.]), np.array([20., 55.])
+
+    >>> # Search at (x - dx, y - dy), so these displacements are negative.
+    >>> pairs = match_pairs(x, y, dx=-25., dy=-35., tolerance=1.)
+    >>> print(pairs.tolist())
+    [(0, 1)]
     """
     kd = cKDTree(list(zip(x, y)))
 
@@ -125,24 +182,39 @@ def match_pairs(x, y, dx, dy, tolerance=1.0):
     return result.as_array()
 
 
-def quarterwave_model(psi, q, u, v, zero=0):
+def quarterwave_model(
+    psi: _QuantityInput,
+    q: _QuantityInput,
+    u: _QuantityInput,
+    v: _QuantityInput,
+    zero: _QuantityInput | None=0,
+) -> _NumberArray | QFloat:
     """Compute polarimetry z(psi) model for quarter wavelength retarder.
 
     Z(psi) = Q*cos(2psi)**2 + U*sin(2psi)*cos(2psi) - V*sin(2psi)
 
     Parameters
     ----------
-    psi: array_like
+    psi
         Array of retarder positions in degrees.
-    q, u, v: float
+    q, u, v
         Stokes parameters
-    zero: float
+    zero
         Zero position of the retarder in degrees.
 
     Return
     ------
     z: array_like
         Array of polarimetry values.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from astropop.polarimetry import quarterwave_model
+    >>> psi = np.array([0., 45., 90., 135.])
+    >>> modulation = quarterwave_model(psi, q=0.1, u=0.2, v=0.03)
+    >>> print(np.round(modulation, 3).tolist())
+    [0.1, -0.03, 0.1, 0.03]
     """
     if zero is not None:
         psi = psi+zero  # avoid inplace modification
@@ -152,24 +224,38 @@ def quarterwave_model(psi, q, u, v, zero=0):
     return zi
 
 
-def halfwave_model(psi, q, u, zero=None):
+def halfwave_model(
+    psi: _QuantityInput,
+    q: _QuantityInput,
+    u: _QuantityInput,
+    zero: _QuantityInput | None=None,
+) -> _NumberArray | QFloat:
     """Compute polarimetry z(psi) model for half wavelength retarder.
 
     Z(psi) = Q*cos(4*psi) + U*sin(4*psi)
 
     Parameters
     ----------
-    psi: array_like
+    psi
         Array of retarder positions in degrees.
-    q, u: float
+    q, u
         Stokes parameters
-    zero: float (optional)
+    zero
         Zero angle of the retarder position.
 
     Return
     ------
     z: array_like
         Array of polarimetry values.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from astropop.polarimetry import halfwave_model
+    >>> psi = np.array([0., 22.5, 45., 67.5])
+    >>> modulation = halfwave_model(psi, q=0.1, u=0.2)
+    >>> print(np.round(modulation, 3).tolist())
+    [0.1, 0.2, -0.1, -0.2]
     """
     if zero is not None:
         psi = psi+zero  # avoid inplace modification
@@ -184,33 +270,45 @@ class StokesParameters:
 
     Parameters
     ----------
-    q, u, v: `~astropop.math.QFloat`
+    q, u, v
         Stokes parameters.
-    retarder: str
+    retarder
         'quarterwave' or 'halfwave'
-    k: float
+    k
         Normalization constant used to compute zi.
-    zero: float
+    zero
         Zero position of the retarder in degrees.
-    zi: `~astropop.math.QFloat`
+    zi
         Relative difference of fluxes between ordinary and extraordinary beams.
-    psi: array_like
+    psi
         Array of retarder positions in degrees.
-    flux: `~astropop.math.QFloat` (optional)
+    flux
         Sum of ordinary and extraordinary counts in each retarder position.
+
+    Examples
+    --------
+    >>> from astropop.polarimetry import StokesParameters
+    >>> result = StokesParameters('halfwave', q=0.03, u=0.04)
+
+    >>> # Linear polarization combines q and u; theta uses the half-angle convention.
+    >>> print(f'{100 * result.p.nominal:.1f}%')
+    5.0%
+    >>> print(f'{result.theta.nominal:.2f} {result.theta.unit}')
+    26.57 deg
     """
 
-    retarder: str  # 'quarterwave' or 'halfwave'
-    q: QFloat
-    u: QFloat
-    v: QFloat = None
-    k: float = 1.0
-    zero: QFloat = 0.0
-    flux: QFloat = None
-    zi: QFloat = None
-    psi: QFloat = None
+    retarder: _t.Literal['halfwave', 'quarterwave']  # 'quarterwave' or 'halfwave'
+    q: _QuantityInput
+    u: _QuantityInput
+    v: _QuantityInput | None = None
+    k: float | QFloat | None = 1.0
+    zero: _QuantityInput | None = 0.0
+    flux: QFloat | None = None
+    zi: _QuantityInput | None = None
+    psi: _QuantityInput | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Validate the retarder and normalize Stokes values, angles and flux inputs."""
         # Check if all variables are correct
         self.retarder = str(self.retarder)
         if self.retarder not in ('halfwave', 'quarterwave'):
@@ -252,27 +350,36 @@ class StokesParameters:
                                      'dimensions')
 
     @property
-    def p(self):
+    def p(self) -> QFloat:
         """Linear polarization level."""
         return np.hypot(self.q, self.u)
 
     @property
-    def theta(self):
-        """Angle between Stokes parameters."""
+    def theta(self) -> QFloat:
+        """Linear polarization position angle in degrees, modulo 180.
+
+        Uses half of atan2(u, q) to preserve the quadrant. The approximate
+        uncertainty is 28.6 * p.std_dev / p.nominal degrees and is undefined
+        for zero linear polarization.
+        """
         theta = _compute_theta(self.q, self.u).nominal
         err = 28.6*self.p.std_dev/self.p.nominal
         return QFloat(theta, err, 'deg')
 
     @property
-    def rms(self):
-        """Root mean square of the fitting."""
+    def rms(self) -> _NumberArray:
+        """Population standard deviation of modulation residuals (ddof=0).
+
+        Despite the property name, this is not the root mean square: a
+        constant residual offset does not contribute. Requires zi and psi.
+        """
         if self.zi is None or self.psi is None:
             raise ValueError('StokesParameters without zi and psi data has no '
                              'fitting rms')
         return np.std(self.zi-self.model(self.psi))
 
     @property
-    def model(self):
+    def model(self) -> _t.Callable[[_QuantityInput], _NumberArray | QFloat]:
         """Callable model of the modulation (zi)."""
         if self.retarder == 'quarterwave':
             model = partial(quarterwave_model, q=self.q, u=self.u, v=self.v,
@@ -282,7 +389,7 @@ class StokesParameters:
         return model
 
     @property
-    def theor_sigma(self):
+    def theor_sigma(self) -> dict[str, _NumberArray]:
         """Theoretical error of stokes parameters from the fluxes SNR."""
         if self.flux is None:
             raise ValueError('The theoretical sigma is only available when '
@@ -302,10 +409,12 @@ class StokesParameters:
                     'v': 1/(np.sqrt(0.4571)*snr),
                     'p': sigma_p}
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """Identify this result object and display its Stokes values."""
         return object.__repr__(self) + '\n' + str(self)
 
-    def __str__(self):
+    def __str__(self) -> str:
+        """Format q and u, including v only when circular polarization is present."""
         s = f'q={self.q}, u={self.u}'
         if self.v is not None:
             s += f', v={self.v}'
@@ -316,17 +425,18 @@ class StokesParameters:
 class _DualBeamPolarimetry(abc.ABC):
     """Base class for polarimetry computation."""
 
-    retarder: str  # 'quarterwave' or 'halfwave'
-    k: float = None  # global normalization constant
-    zero: float = None  # zero position of the retarder. If not set, computed.
+    retarder: _t.Literal['halfwave', 'quarterwave']  # 'quarterwave' or 'halfwave'
+    k: float | None = None  # global normalization constant
+    zero: float | QFloat | units.Quantity | None = None  # zero position of the retarder. If not set, computed.
     compute_k: bool = False  # compute the normalization constant
-    min_snr: float = None  # minimum signal-to-noise ratio
+    min_snr: float | None = None  # minimum signal-to-noise ratio
     psi_deviation: float = 0.1  # max deviation of retarder position
     iter_tolerance: float = 1e-5  # maximum tolerance on the iterative fitting
     max_iters: int = 100  # maximum number of iterations
-    zero_range: List = field(default_factory=lambda: [0, 90])  # range of the zero position
+    zero_range: _t.Sequence[float] = field(default_factory=lambda: [0, 90])  # range of the zero position
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Validate retarder and normalization settings and normalize angle bounds."""
         if self.retarder not in ['quarterwave', 'halfwave']:
             raise ValueError(f"Retarder {self.retarder} unknown.")
         if isinstance(self.zero, (QFloat, units.Quantity)):
@@ -343,18 +453,23 @@ class _DualBeamPolarimetry(abc.ABC):
         # number of positions per cicle
         self._n_pos = 8 if self.retarder == 'quarterwave' else 4
 
-    def _check_positions(self, psi):
+    def _check_positions(self, psi: _npt.ArrayLike) -> None:
         """Check if positions are in the correct order."""
         # Only positions multiple of 22.5 degrees are allowed
         devs = np.abs(psi/22.5 - np.round(psi/22.5, 0))*22.5
         if np.any(devs > self.psi_deviation):
             raise ValueError("Retarder positions must be multiple of 22.5 deg")
 
-    def _calc_zi(self, f_ord, f_ext, k):
+    def _calc_zi(self, f_ord: QFloat, f_ext: QFloat, k: float) -> QFloat:
         """Compute zi from ordinary and extraordinary fluxes."""
         return (f_ord - f_ext*k)/(f_ord + f_ext*k)
 
-    def _estimate_normalize_half(self, psi, f_ord, f_ext):
+    def _estimate_normalize_half(
+        self,
+        psi: _npt.ArrayLike,
+        f_ord: QFloat,
+        f_ext: QFloat,
+    ) -> float:
         """Estimate the normalization factor for halfwave retarder."""
         pos_in_cycle = np.mod(np.floor_divide(psi, 22.5), self._n_pos)
         pos_in_cycle = pos_in_cycle.astype(int)
@@ -373,7 +488,13 @@ class _DualBeamPolarimetry(abc.ABC):
         # points
         return np.sum(ford_mean)/np.sum(fext_mean)
 
-    def _estimate_normalize_quarter(self, psi, f_ord, f_ext, q):
+    def _estimate_normalize_quarter(
+        self,
+        psi: _npt.ArrayLike,
+        f_ord: QFloat,
+        f_ext: QFloat,
+        q: float,
+    ) -> float:
         """Estimate the normalization factor for quarterwave retarder."""
         ratio = self._estimate_normalize_half(psi, f_ord, f_ext)
         # PCCDPACK uses the following if to calculate the normalization. But
@@ -385,7 +506,12 @@ class _DualBeamPolarimetry(abc.ABC):
         q_norm = (1-0.5*q)/(1+0.5*q)
         return ratio*q_norm
 
-    def _half_compute(self, psi, f_ord, f_ext):
+    def _half_compute(
+        self,
+        psi: _npt.ArrayLike,
+        f_ord: QFloat,
+        f_ext: QFloat,
+    ) -> StokesParameters:
         """Compute the Stokes params for halfwave retarder."""
         fluxes = f_ord + f_ext
         # estimate normalization factor
@@ -407,7 +533,12 @@ class _DualBeamPolarimetry(abc.ABC):
         return StokesParameters('halfwave', q=q, u=u, v=None, k=QFloat(k),
                                 zero=zero, psi=psi, zi=zi, flux=fluxes)
 
-    def _quarter_compute(self, psi, f_ord, f_ext):
+    def _quarter_compute(
+        self,
+        psi: _npt.ArrayLike,
+        f_ord: QFloat,
+        f_ext: QFloat,
+    ) -> StokesParameters:
         """Compute the Stokes params for quarterwave retarder."""
         fluxes = f_ord + f_ext
         # bypass normalization
@@ -449,29 +580,36 @@ class _DualBeamPolarimetry(abc.ABC):
                                 zi=zi, psi=QFloat(psi, unit='deg'),
                                 flux=fluxes)
 
-    def compute(self, psi, f_ord, f_ext, f_ord_error=None, f_ext_error=None):
+    def compute(
+        self,
+        psi: _npt.ArrayLike,
+        f_ord: _QuantityInput,
+        f_ext: _QuantityInput,
+        f_ord_error: _npt.ArrayLike | None=None,
+        f_ext_error: _npt.ArrayLike | None=None,
+    ) -> StokesParameters:
         """Compute the Stokes params from ordinary and extraordinary fluxes.
 
         Parameters
         ----------
-        psi : array_like
+        psi
             Retarder positions in degrees. Must be multiple of 22.5 degrees.
-        f_ord : array_like
-            Fluxes of ordinary beam. If `~astropop.math.QFloat`, the errors
+        f_ord
+            Fluxes of ordinary beam. If `~astropop.math.physical.QFloat`, the errors
             will be considered in the parameters computation.
-        f_ext : array_like
-            Fluxes of extraordinary beam. If `~astropop.math.QFloat`, the
+        f_ext
+            Fluxes of extraordinary beam. If `~astropop.math.physical.QFloat`, the
             errors will be considered in the parameters computation.
-        f_ord_error : array_like, optional
-            Errors of the ordinary fluxes. Conflicts with the error of `f_ord`
-            if it is a `~astropop.math.QFloat`.
-        f_ext_error : array_like, optional
+        f_ord_error
+            Errors of the ordinary fluxes. Conflicts with the error of ``f_ord``
+            if it is a `~astropop.math.physical.QFloat`.
+        f_ext_error
             Errors of the extraordinary fluxes. Conflicts with the error of
-            `f_ext` if it is a `~astropop.math.QFloat`.
+            ``f_ext`` if it is a `~astropop.math.physical.QFloat`.
 
         Returns
         -------
-        `~astropop.polarimetry.StokesParameters`:
+        result
             Instances containing the computed Stokes Parameters.
         """
         self._check_positions(psi)
@@ -484,11 +622,11 @@ class _DualBeamPolarimetry(abc.ABC):
             return self._quarter_compute(psi, f_ord, f_ext)
 
     @abc.abstractmethod
-    def _half_fit(self, psi, zi):
+    def _half_fit(self, psi: _npt.ArrayLike, zi: QFloat) -> tuple[QFloat, QFloat]:
         """Fit the Stokes params for halfwave retarder."""
 
     @abc.abstractmethod
-    def _quarter_fit(self, psi, zi):
+    def _quarter_fit(self, psi: _npt.ArrayLike, zi: QFloat) -> dict[str, QFloat]:
         """Fit the Stokes params for quarterwave retarder."""
 
 
@@ -496,52 +634,61 @@ class _DualBeamPolarimetry(abc.ABC):
 class SLSDualBeamPolarimetry(_DualBeamPolarimetry):
     """Polarimetry computation for Stokes Least Squares algorithm.
 
-    This method is describe in [1]_ and consists in fitting the data using
-    theoretical models. This method has the advantage of not need particular
-    sets of retarder positions and can handle missing points. More datailed
-    description of fitted equations are given in [2]_ and [3]_.
+    Fit theoretical modulation models as described in [1]_, [2]_ and [3]_.
+    Retarder angles must be multiples of 22.5 degrees within psi_deviation.
+    Missing positions are possible if the remaining measurements constrain
+    the fit, but normalization estimation requires every phase in a cycle.
 
     Parameters
     ----------
-    retarder: str
+    retarder
         Retarder type. Must be 'quarterwave' or 'halfwave'.
-    k: float (optional)
-        Normalization factor. If None, it is estimated from the data.
-        Default is None.
-    zero: float (optional)
-        Zero position of the retarder in degrees. Defult is None. If None,
+    k
+        Normalization factor multiplying the extraordinary beam. Default is
+        None: use 1 unless ``compute_k=True`` requests estimation.
+    zero
+        Zero position of the retarder in degrees. Default is None. If None,
         it will be estimated from the data on quarterwave retarders and will be
         zero for halfwave retarders.
-    compute_k: bool (optional)
+    compute_k
         Fit the normalization factor using the data. Default is False.
         Conflicts with ``k`` argument.
-    min_snr: float (optional)
-        Minimum signal-to-noise ratio. Points with lower SNR will be discarded.
-        Default is None.
-    psi_deviation: float (optional)
+    min_snr
+        Reserved compatibility parameter; currently does not filter measurements.
+        Select usable beam measurements before calling ``compute``. Default
+        is None.
+    psi_deviation
         Maximum deviation of the psi position from the sequence multiple
         of 22.5 degrees. Default is 0.1 degrees.
-    iter_tolerance: float (optional)
-        When fitting the parameter for quarterwave retarders, the iteration
-        stops when the difference between the previous and the current
-        parameters is less than this tolerance. Default is 1e-5.
-    max_iters: int (optional)
-        Maximum number of iterations. Default is 100.
-    zero_range: list([float, float]) (optional)
+    iter_tolerance
+        Absolute tolerance passed to ``numpy.allclose`` when comparing
+        successive q, u, v during quarterwave normalization estimation.
+        NumPy's default relative tolerance also applies. Default is 1e-5.
+    max_iters
+        Iteration budget for quarterwave normalization estimation. The
+        current loop continues through this budget after recording a
+        converged comparison. Raises RuntimeError if no comparison meets
+        the convergence criterion. Default is 100.
+    zero_range
         Minimum and maximum acceptable values for the zero position, in
         degrees. Default is [0, 90].
 
     Notes
     -----
-    - The model fitting is performed by `~scipy.optimize.cure_fit` function,
+    - The model fitting is performed by `~scipy.optimize.curve_fit` function,
       using the Trust Region Reflective ``trf`` method.
     - If ``k`` or ``zero`` arguments are passed, they won't be computed.
       Instead, the passed values will be used.
     - If ``compute_k`` is True, the value will be estimated from the data.
-      For halfwave retarders, it will be estimated by the ratio of the total
-      flux of the ordinary flux and the extraordinary flux in all positions
-      [2]_. For quarterwave retarders, it will be estimated in a iterative
+      For halfwave retarders, take the median flux per phase for each beam,
+      then divide the sum of the ordinary medians by the sum of the
+      extraordinary medians [2]_. Quarterwave retarders use the iterative
       process described in [4]_.
+    - Propagated zi errors are relative weights only when all are positive;
+      otherwise the whole fit is unweighted. ``curve_fit`` uses its default
+      ``absolute_sigma=False``, scaling parameter covariance by residual
+      variance. Returned errors are square roots of the covariance diagonal;
+      off-diagonal covariances are not stored in the result.
 
     References
     ----------
@@ -549,9 +696,27 @@ class SLSDualBeamPolarimetry(_DualBeamPolarimetry):
     .. [2] https://ui.adsabs.harvard.edu/abs/1984PASP...96..383M
     .. [3] https://ui.adsabs.harvard.edu/abs/1998A&A...335..979R
     .. [4] https://ui.adsabs.harvard.edu/abs/2021AJ....161..225L
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from astropop.polarimetry import SLSDualBeamPolarimetry, halfwave_model
+    >>> psi = np.arange(8) * 22.5
+    >>> modulation = halfwave_model(psi, q=0.03, u=-0.02)
+
+    >>> # Split fixed total counts into beams with the desired normalized difference.
+    >>> ordinary = 10000 * (1 + modulation) / 2
+    >>> extraordinary = 10000 * (1 - modulation) / 2
+    >>> solver = SLSDualBeamPolarimetry('halfwave', k=1., zero=0.)
+    >>> result = solver.compute(psi, ordinary, extraordinary)
+    >>> print(f'q={result.q.nominal:.3f}, u={result.u.nominal:.3f}')
+    q=0.030, u=-0.020
     """
 
-    def _get_fitter(self, zi):
+    def _get_fitter(
+        self,
+        zi: QFloat,
+    ) -> _t.Callable[..., tuple[_npt.NDArray, _npt.NDArray]]:
         """Get the fitter function."""
         errors = zi.std_dev
         if np.all(errors > 0):
@@ -561,7 +726,7 @@ class SLSDualBeamPolarimetry(_DualBeamPolarimetry):
             logger.info('Errors will not be considered in the fit.')
         return fitter
 
-    def _half_fit(self, psi, zi):
+    def _half_fit(self, psi: _npt.ArrayLike, zi: QFloat) -> tuple[QFloat, QFloat]:
         """Fit the model for halfwave retarder."""
         # change the model to do not have to fit the zero position
         model = partial(halfwave_model, zero=self.zero)
@@ -578,7 +743,13 @@ class SLSDualBeamPolarimetry(_DualBeamPolarimetry):
         # use qfloat for fitted values
         return QFloat(q, uncertainty=q_err), QFloat(u, uncertainty=u_err)
 
-    def _quarter_fit(self, psi, zi):
+    def _quarter_fit(self, psi: _npt.ArrayLike, zi: QFloat) -> dict[str, QFloat]:
+        """Fit q, u and v, optionally solving for the retarder zero position.
+
+        Stokes values are bounded between -1 and 1. A fitted zero is restricted to
+        zero_range. Return fitted values with uncertainties from the covariance
+        diagonal; a fixed zero is returned without a fitted uncertainty.
+        """
         # if zero is not set, estimate it from the data
         if self.zero is not None:
             model = partial(quarterwave_model, zero=self.zero)

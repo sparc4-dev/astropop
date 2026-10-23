@@ -1,6 +1,12 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 """Small python addons to be used in astropop."""
 
+from __future__ import annotations
+
+import typing as _t
+import logging as _logging
+
+
 from os import linesep
 import subprocess
 import asyncio
@@ -12,11 +18,13 @@ import numpy as np
 
 from .logger import logger, resolve_level_string
 
+_T = _t.TypeVar('_T')
+
 __all__ = ['string_fix', 'batch_key_replace', 'check_number',
            'broadcast', 'run_command']
 
 
-def string_fix(string, encode='utf-8'):
+def string_fix(string: object, encode: str='utf-8') -> str:
     """
     Fix the byte<->string problem in python 3.
 
@@ -25,16 +33,24 @@ def string_fix(string, encode='utf-8'):
 
     Parameters
     ----------
-    string: `str` or `bytes`
+    string
         String to be checked or converted.
-    encode: string (optional)
+    encode
         Python compatible `bytes` like encoding.
         Default: 'utf-8'
 
     Returns
     -------
-    string: `str`
+    string
         The Python 3 string.
+
+    Examples
+    --------
+    >>> from astropop.py_utils import string_fix
+    >>> print(string_fix(b'object name'))
+    object name
+    >>> print(string_fix(42))
+    42
     """
     if isinstance(string, bytes):
         string = string.decode(encode)
@@ -45,19 +61,27 @@ def string_fix(string, encode='utf-8'):
     return string
 
 
-def check_number(value):
+def check_number(value: object) -> bool:
     """Check if a value passed is a scalar number.
 
     Parameters
     ----------
-    value: any
+    value
         Value to be checked.
 
     Returns
     -------
-    bool:
+    bool
         `True` if the value is a scalar number (not string, list or array) and
         `False` otherwise.
+
+    Examples
+    --------
+    >>> from astropop.py_utils import check_number
+
+    >>> # Boolean values and sequences do not count as scalar numbers here.
+    >>> print(check_number(1.5), check_number(True), check_number([1.5]))
+    True False False
     """
     if isinstance(value, Number):
         if not isinstance(value, (bool, complex)):
@@ -65,29 +89,42 @@ def check_number(value):
     return False
 
 
-class _scalar_iterator:
+class _scalar_iterator(_t.Generic[_T]):
     """Iterator for scalar values."""
-    def __init__(self, value, length):
+    def __init__(self, value: _T, length: int) -> None:
+        """Retain a scalar and the number of times it should be exposed."""
         self.value = value
         self.length = length
 
-    def __iter__(self):
+    def __iter__(self) -> _t.Iterator[_T]:
+        """Yield the same scalar the configured number of times."""
         for i in range(self.length):
             yield self.value
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> _T:
+        """Return the scalar for a valid nonnegative index, otherwise raise IndexError."""
         if index >= self.length or index < 0:
             raise IndexError
         return self.value
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """Return the configured repetition count."""
         return self.length
 
 
 class broadcast:
-    """Broadcast values to the list size. Alternative to `~numpy.broadcast`."""
+    """Broadcast values to the list size. Alternative to `~numpy.broadcast`.
 
-    def __init__(self, *args):
+    Examples
+    --------
+    >>> from astropop.py_utils import broadcast
+
+    >>> # Repeat scalar values while advancing through the coordinate list.
+    >>> print(list(broadcast([1, 2, 3], 5, None)))
+    [(1, 5, None), (2, 5, None), (3, 5, None)]
+    """
+
+    def __init__(self, *args: object) -> None:
         """Initialize the broadcast object."""
         if len(args) == 0:
             raise ValueError("Empty broadcast")
@@ -104,13 +141,13 @@ class broadcast:
         self.args = [a if lengths[i] >= 0 else _scalar_iterator(a, self.length)
                      for i, a in enumerate(args)]
 
-    def __iter__(self):
+    def __iter__(self) -> _t.Iterator[tuple[object, ...]]:
         """Return the iterator."""
         for i in zip(*self.iters):
             yield i
 
     @staticmethod
-    def _get_length(value):
+    def _get_length(value: object) -> int:
         """Get the length of iterable only values."""
         if value is None:
             return -1
@@ -119,16 +156,19 @@ class broadcast:
         return len(value)
 
     @property
-    def iters(self):
+    def iters(self) -> list[_t.Iterable[object]]:
         """Return the tuple containing the iterators."""
         return self.args
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Return the length of the broadcast."""
         return self.length
 
 
-def batch_key_replace(dictionary, key=None):
+def batch_key_replace(
+    dictionary: _t.MutableMapping[str, _t.Any],
+    key: str | None=None,
+) -> None:
     """Scan and replace {key} values in a dict by dict['key'] value.
 
     Notes
@@ -137,10 +177,20 @@ def batch_key_replace(dictionary, key=None):
 
     Parameters
     ----------
-    dictionary: dict_like
+    dictionary
         Dictionary to replace the keys.
-    key: string or None, optional
+    key
         The key to be replaced.
+
+    Examples
+    --------
+    >>> from astropop.py_utils import batch_key_replace
+    >>> settings = {'root': '/data', 'file': '{root}/image.fits'}
+
+    >>> # Resolve references in place, preserving unrelated dictionary entries.
+    >>> batch_key_replace(settings)
+    >>> print(settings['file'])
+    /data/image.fits
     """
     if key is None:
         for i in dictionary.keys():
@@ -164,7 +214,10 @@ def batch_key_replace(dictionary, key=None):
         return
 
 
-async def _read_stream(stream, callback):
+async def _read_stream(
+    stream: asyncio.StreamReader,
+    callback: _t.Callable[[bytes], object],
+) -> None:
     """Read stream buffers."""
     # TODO: when deprcate py37
     # while (line := await stream.readline()):
@@ -177,10 +230,18 @@ async def _read_stream(stream, callback):
             break
 
 
-async def _subprocess(args, stdout, stderr, stdout_loglevel, stderr_loglevel,
-                      logger, **kwargs):
+async def _subprocess(
+    args: _t.Sequence[str],
+    stdout: list[str],
+    stderr: list[str],
+    stdout_loglevel: int,
+    stderr_loglevel: int,
+    logger: _logging.Logger,
+    **kwargs: _t.Any,
+) -> subprocess.CompletedProcess[str]:
     """Execute subprocesses."""
-    def proccess_out(line, std_l, loglevel):
+    def proccess_out(line: bytes, std_l: list[str], loglevel: int) -> None:
+        """Decode a UTF-8 output line, remove its line ending, store it and log it."""
         line = line.decode("utf-8").rstrip('\r\n')
         std_l.append(line)
         logger.log(loglevel, line)
@@ -223,7 +284,7 @@ async def _subprocess(args, stdout, stderr, stdout_loglevel, stderr_loglevel,
                                        stderr=linesep.join(stderr) + linesep)
 
 
-def _run_async_task(task):
+def _run_async_task(task: _t.Coroutine[object, object, _T]) -> _T:
     """Run async task and avoid problems with Jupyter."""
     try:
         loop = asyncio.get_running_loop()
@@ -244,33 +305,50 @@ def _run_async_task(task):
     return loop.run_until_complete(task)
 
 
-def run_command(args, stdout=None, stderr=None, stdout_loglevel='DEBUG',
-                stderr_loglevel='ERROR', logger=logger, **kwargs):
+def run_command(
+    args: str | _t.Sequence[str],
+    stdout: list[str] | None=None,
+    stderr: list[str] | None=None,
+    stdout_loglevel: str | int='DEBUG',
+    stderr_loglevel: str | int='ERROR',
+    logger: _logging.Logger=logger,
+    **kwargs: _t.Any,
+) -> tuple[subprocess.CompletedProcess[str], list[str], list[str]]:
     """Run a command in command line with logging.
 
     Parameters
     ----------
-    args: list of strings or string
+    args
         Full command, with arguments, to be executed.
-    stdout: list (optional)
+    stdout
         List to store the stdout of the command. If None, a new list will be
         created.
-    stderr: list (optional)
+    stderr
         List to store the stderr of the command. If None, a new list will be
         created.
-    stdout_loglevel: string (optional)
+    stdout_loglevel
         Log level to print the stdout lines. Default is 'DEBUG'.
-    stderr_loglevel: string (optional)
+    stderr_loglevel
         Log level to print the stderr lines. Default is 'ERROR'.
-    logger: `~logging.Logger` (optional)
+    logger
         Custom logger to print the outputs.
-    **kwargs: dict (optional)
+    **kwargs
         Additional arguments passed to `~asyncio.create_subprocess_exec` on
         Windows or `~asyncio.create_subprocess_shell` on other platforms.
 
     Returns
     -------
         `~subprocess.CompletedProcess` results of the execution.
+
+    Examples
+    --------
+    >>> import sys
+    >>> from astropop.py_utils import run_command
+
+    >>> # Use this interpreter and an argument list instead of platform shell syntax.
+    >>> completed, stdout, stderr = run_command([sys.executable, '-c', 'print(42)'])
+    >>> print(completed.returncode, stdout, stderr)
+    0 ['42'] []
     """
     # Put the cmd in python list, required
     if isinstance(args, (str, bytes)):

@@ -1,42 +1,20 @@
-*************************
-Astropop Documentation
-*************************
+Astropop documentation
+======================
 
-.. warning::
-    Documentation outdated. Do not use it. We are rewriting it!
+Astropop provides astronomical image reduction, photometry, polarimetry,
+astrometry and catalog tools. Learn complete reductions in tutorials, or use
+the module chapters for explanations, simple examples and API reference.
 
-.. TODO:: Insert detailed install instructions here
+.. py:module:: astropop
 
-***************
-For Users
-***************
-
-The users documentation, focused on the modules technical details, API usage and examples can be found in our user guide:
+Explore the documentation
+-------------------------
 
 .. toctree::
     :maxdepth: 1
 
-    user_guide.rst
-
-For end users that just want to reduce their data using ASTROPOP, you can follow our reduction examples on this documentations:
-
-.. toctree::
-    :maxdepth: 1
-
-    ipynb/diy_reduction_script.ipynb
-
-
-***************
-Developer Docs
-***************
-
-.. toctree::
-    :maxdepth: 1
-
-    dev/pixel_convention
-
-***************
-API
-***************
-
-* :ref:`modindex`
+    getting_started/index
+    tutorials/index
+    modules/index
+    development/index
+    project/index

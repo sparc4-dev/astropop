@@ -5,6 +5,16 @@ This module wraps the astrometry.net solve-field routine, with automatic
 improvements.
 """
 
+from __future__ import annotations
+
+import typing as _t
+from inspect import cleandoc as _cleandoc
+import numpy.typing as _npt
+import subprocess as _subprocess
+from ..framedata import FrameData as _FrameData
+from .._typing import (PathLike as _PathLike, UnitLike as _UnitLike,
+                       HeaderLike as _HeaderLike, ImageHDU as _ImageHDU)
+
 import os
 import shutil
 from subprocess import CalledProcessError
@@ -35,10 +45,23 @@ _solve_field = shutil.which('solve-field')
 
 
 class SolveFieldCommand:
-    """Astrometry.net solve field check and run command."""
+    """Locate and invoke an Astrometry.net solve-field executable.
+
+    Parameters
+    ----------
+    command
+        Existing executable path, defaulting to solve-field found on PATH.
+        An existing wrapper can be copied to reuse its cached version.
+
+    Notes
+    -----
+    Construction checks path existence. The version property runs
+    ``solve-field --version`` lazily; run executes the supplied arguments.
+    """
     _version = None
 
-    def __init__(self, command=_solve_field):
+    def __init__(self, command: _PathLike | None=_solve_field) -> None:
+        """Validate the executable path or reuse an existing command wrapper."""
         if isinstance(command, SolveFieldCommand):
             self._version = command._version
             command = command._command
@@ -47,14 +70,18 @@ class SolveFieldCommand:
         self._command = command
 
     @property
-    def version(self):
+    def version(self) -> version.Version:
         """Return the version of the solve-field command."""
         if self._version is None:
             _, sout, _ = run_command([self._command, '--version'])
             self._version = version.parse(sout[0])
         return self._version
 
-    def run(self, args, **kwargs):
+    def run(
+        self,
+        args: _t.Sequence[str],
+        **kwargs: _t.Any,
+    ) -> tuple[_subprocess.CompletedProcess[str], list[str], list[str]]:
         """Run the solve-field command."""
         return run_command([self._command, *args], **kwargs)
 
@@ -258,27 +285,38 @@ solve_field_params = {
 }
 
 
-def get_options_help():
+def get_options_help() -> str:
+    """Describe the supported solve-field options.
+
+    Returns
+    -------
+    help_text
+        A reStructuredText Notes section listing option names, accepted values
+        and their meanings. This only formats local definitions; it does not
+        invoke solve-field.
+    """
     s = "Notes\n-----\n\nThe supported options are:\n"
     for k, v in solve_field_params.items():
         s += f"    {k}: {v[0]}\n        {v[1]}\n"
     return s
 
 
-get_options_help.__doc__ = get_options_help()
+get_options_help.__doc__ = _cleandoc(get_options_help.__doc__) + '\n\n' + get_options_help()
 
 
 class AstrometryNetUnsolvedField(CalledProcessError):
     """Raised if Astrometry.net could not solve the field."""
 
-    def __init__(self, path):
+    def __init__(self, path: _PathLike) -> None:
+        """Record the input path whose astrometric solution failed."""
         self.path = path
 
-    def __str__(self):
+    def __str__(self) -> str:
+        """Describe the unsolved field using its input path."""
         return f"{self.path}: could not solve field"
 
 
-def _parse_angle(angle, unit=None):
+def _parse_angle(angle: str | float | Angle, unit: _UnitLike=None) -> float:
     """Transform angle in float."""
     # plate scale
     # radius
@@ -301,7 +339,7 @@ def _parse_angle(angle, unit=None):
     return float(angle)
 
 
-def _parse_coordinates(options):
+def _parse_coordinates(options: dict[str, _t.Any]) -> list[str]:
     """Parse filed center coordinates."""
     coord = options.pop('center', None)
     ra = options.pop('ra', None)
@@ -328,7 +366,7 @@ def _parse_coordinates(options):
     return ['--ra', str(ra), '--dec', str(dec)]
 
 
-def _parse_pltscl(options):
+def _parse_pltscl(options: dict[str, _t.Any]) -> list[str]:
     """Parse plate scale."""
     low = options.pop('scale-low', None)
     hi = options.pop('scale-high', None)
@@ -355,7 +393,13 @@ def _parse_pltscl(options):
             '--scale-units', str(units)]
 
 
-def _parse_crpix(options):
+def _parse_crpix(options: dict[str, _t.Any]) -> list[str | float]:
+    """Consume reference-pixel options and build their command arguments.
+
+    The presence of ``'crpix-center'`` selects the image center. Otherwise both
+    ``'crpix-x'`` and ``'crpix-y'`` are required to emit an explicit position.
+    Combining the center option with both coordinates raises ValueError.
+    """
     center = False
     if 'crpix-center' in options:
         center = True
@@ -376,22 +420,37 @@ def _parse_crpix(options):
 
 
 class AstrometricSolution():
-    """Store astrometric solution.
+    """Store a WCS, its FITS header and optional matched-source table.
 
     Parameters
     ----------
-    header: `~astropy.io.fits.Header` (optional)
-        Astrometric solved fits header. WCS will be extrated from it.
-    correspondences: `~astropy.table.Table` (optional)
+    header
+        FITS header from which the WCS is constructed.
+    correspondences
         A table containing the matched correspondences between the (x, y)
         positions and the matched (ra, dec) catalog coordinates.
+
+    Examples
+    --------
+    >>> from astropop.astrometry import AstrometricSolution, wcs_from_coords
+    >>> known = wcs_from_coords(16, 16, 120., -30., 0.34, north='top')
+
+    >>> # Wrap a known WCS locally; this does not call Astrometry.net.
+    >>> solution = AstrometricSolution(known.to_header())
+    >>> print(solution.wcs.pixel_n_dim, solution.correspondences)
+    2 None
     """
 
     _wcs = None
     _header = None
     _corr = None
 
-    def __init__(self, header, correspondences=None):
+    def __init__(
+        self,
+        header: _HeaderLike,
+        correspondences: Table | _npt.NDArray | None=None,
+    ) -> None:
+        """Build a WCS and copy the header and optional correspondence table."""
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             self._wcs = WCS(header, relax=True)
@@ -400,86 +459,68 @@ class AstrometricSolution():
                 self._corr = Table(correspondences)
 
     @property
-    def wcs(self):
-        """World Coordinate System `~astropy.coordinates.WCS` solution."""
+    def wcs(self) -> WCS:
+        """World Coordinate System `~astropy.wcs.WCS` solution."""
         return copy.deepcopy(self._wcs)
 
     @property
-    def header(self):
+    def header(self) -> fits.Header:
         """`~astropy.io.fits.Header` containing the astrometric solution."""
         return copy.deepcopy(self._header)
 
     @property
-    def correspondences(self):
-        """Correspondece `~astropy.table.Table` between image stars and
-        ``astrometry.net`` index objects.
+    def correspondences(self) -> Table | None:
+        """Copy of the matched-source table, or None if none was supplied.
 
-        This property is not so smart. It just returns a copy of the table
-        passed as input. If this is an ``astrometry.net`` correspondences
-        table, it will have the following columns:
+        No matching or residual calculation is performed by this property.
+        An Astrometry.net correspondence table includes the following columns:
 
         - field_x and field_y
-            Image coordinates of each star in the solved image.
+            FITS one-based image coordinates of each detected star.
         - index_x and index_y
-            X and Y coordinates of matched stars in the index file used to
-            solve the image.
+            Image-plane coordinates of matched index stars.
         - field_ra and field_dec
-            Physical RA and DEC solved coordinates of each star in the image.
+            Solved right ascension and declination of the detected stars.
         - index_ra and index_dec
-            Physical RA and DEC of the matched star in the index file used to
-            solve the image.
+            Reference right ascension and declination of the matched index stars.
+
+        These matches contributed to solving the image. Assess accuracy using
+        independent reference stars as well as residuals of these matches.
         """
         return copy.deepcopy(self._corr)
 
 
 class AstrometrySolver():
-    """Use astrometry.net to solve the astrometry of images or list of stars.
-    For convenience, all the auxiliary files will be deleted, except you
-    specify to keep it with ``keep_files``.
+    """Solve image or source-list astrometry with a local Astrometry.net command.
 
     Parameters
     ----------
-    solve_field: string (optional)
-        ``solve-field`` command from astrometry.net package. If not set, it
-        will be determined by `~shutil.which` function.
-    config_file: string (optional)
-        Custom ``astrometry.cfg`` file to read the configuration from. If
-        `None`, default file will be used.
-    config: dict (optional)
-        Config parameters for astrometry.net. If None is passed, the parameters
-        will be read from the default ``astrometry.cfg`` file.
-    defaults: `dict` (optional)
-        Default arguments to be passed to ``solve-field`` program. If not set,
-        arguments ``no-plot`` and ``overwrite`` will be used. Use only double
-        dashed arguments, ignoring the dashed in the `dict` keys.
-        See `~astropop.astrometry.astrometrynet.print_options_help`
-    keep_files: bool (optional)
-        Keep the temporary files after finish.
+    solve_field
+        Existing solve-field executable path. The default is found on PATH.
+        Astrometry.net version 0.95 or newer is required.
+    defaults
+        Default solve-field options, using names without leading dashes.
+        These update the initial no-plots and overwrite flag options. Per-call
+        options supplied to solve_field override the defaults. See
+        `~astropop.astrometry.astrometrynet.get_options_help` for supported keys.
+    keep_files
+        Keep auxiliary solver products instead of removing them after solving.
+        Default is False.
 
     Notes
     -----
-    - Configuration parameters are:
-        - cpu_limit: int
-            Maximum CPU time to spend on a field, in seconds.
-        - inparallel: bool
-            Check indexes in parallel. Only enable it if you have memory to
-            store all indexes.
-        - minwidth and maxwidth: int
-            If no scale estimate is given, use these limits on field width in
-            deg.
-        - depths: int or list(int)
-            If no depths are given, use these.
-        - add_path: string or list(string)
-            Location of astrometry.net index files. If None provided, default
-            astrometry.net "$prefix/data" directory will be used.
-        - autoindex: bool
-            Load any indices found in the directories listed.
-        - index: string or list(string)
-            Explicitly list the indices to load.
+    Index installation and Astrometry.net's own configuration are external
+    setup steps. This wrapper has no config or config_file constructor option
+    and does not synthesize astrometry.cfg files from arbitrary parameters.
     """
 
-    def __init__(self, solve_field=_solve_field, defaults=None,
-                 keep_files=False):
+    def __init__(
+        self,
+        solve_field: _PathLike | SolveFieldCommand | None=_solve_field,
+        defaults: dict[str, _t.Any] | None=None,
+        keep_files: bool=False,
+    ) -> None:
+        """Configure solver defaults, validate its version and set file retention."""
         # declare the defaults here to be safer
         self._defaults = {'no-plots': None, 'overwrite': None}
         if defaults is None:
@@ -491,34 +532,51 @@ class AstrometrySolver():
             raise ValueError('Astrometry.net version must be at least 0.95.')
         self._keep = keep_files
 
-    def solve_field(self, filename, options=None, output_dir=None, **kwargs):
-        """Try to solve an image using the astrometry.net.
+    def solve_field(
+        self,
+        filename: _PathLike,
+        options: dict[str, _t.Any] | None=None,
+        output_dir: _PathLike | None=None,
+        **kwargs: _t.Any,
+    ) -> AstrometricSolution:
+        """Solve an image or source-list file using local Astrometry.net.
 
         Parameters
         ----------
-        filename : str
+        filename
             Name of the file to be solved. Can be a fits image or a xyls
             sources file.
-        options : `dict` (optional)
+        options
             Dictionary of ``solve-field`` options. See
             `~astropop.astrometry.astrometrynet.get_options_help` for all
             available options. The most useful are:
             - center or ra and dec: field center
             - radius: maximum search radius
-            - scale: pixel scale in arcsec/pixel
+            - scale-low and scale-high: bounds in the specified scale-units
             - tweak-order: SIP order to fit
-        output_dir : str
+        output_dir
             Directory to output all solved files.
-        **kwargs :
+        **kwargs
             Additional keyword arguments to be passed to
             `~astropop.py_utils.run_command`.
 
         Returns
         -------
-        solution : `~astropop.astrometry.AstrometricSolution`
+        solution
             Astrometric solution class containing the solved header,
             the `~astropy.wcs.WCS` solved class and the correspondence table
             between the sources and the catalog.
+
+        Raises
+        ------
+        AstrometryNetUnsolvedField
+            The solver did not produce a solved-field marker.
+        subprocess.CalledProcessError
+            The external command failed with a nonzero exit code.
+        KeyError
+            An option is not supported by this wrapper.
+        ValueError
+            Mutually exclusive options were supplied.
         """
         if options is None:
             options = {}
@@ -534,11 +592,15 @@ class AstrometrySolver():
         return AstrometricSolution(header=solved_header,
                                    correspondences=coorespond)
 
-    def print_options_help(self):
+    def print_options_help(self) -> None:
         """Print the available options for ``solve-field``."""
         print(get_options_help())
 
-    def _get_output_dir(self, root, output_dir):
+    def _get_output_dir(
+        self,
+        root: str,
+        output_dir: _PathLike | None,
+    ) -> tuple[_PathLike, bool]:
         """Check output directory and create the temporary directory."""
         if output_dir is None:
             output_dir = mkdtemp(prefix=root + '_', suffix='_astrometry.net')
@@ -548,7 +610,7 @@ class AstrometrySolver():
             tmp_dir = False
         return output_dir, tmp_dir
 
-    def _parse_options(self, options):
+    def _parse_options(self, options: dict[str, _t.Any]) -> list[str | float]:
         """Parse and check all known options."""
         for key in options.keys():
             if key not in solve_field_params:
@@ -572,14 +634,31 @@ class AstrometrySolver():
 
         return args
 
-    def _get_args(self, root, fname, options, output_dir,
-                  correspond):
+    def _get_args(
+        self,
+        root: str,
+        fname: _PathLike,
+        options: dict[str, _t.Any],
+        output_dir: _PathLike,
+        correspond: _PathLike,
+    ) -> list[_PathLike | float]:
+        """Build solve-field arguments for the input and output products.
+
+        Parsing consumes recognized entries from options. The root argument is
+        retained for compatibility but is not used to assemble the command.
+        """
         args = [fname, '--dir', output_dir]
         args += self._parse_options(options)
         args += ['--corr', correspond]
         return args
 
-    def _run_solver(self, filename, options, output_dir=None, **kwargs):
+    def _run_solver(
+        self,
+        filename: _PathLike,
+        options: dict[str, _t.Any],
+        output_dir: _PathLike | None=None,
+        **kwargs: _t.Any,
+    ) -> tuple[fits.Header, Table]:
         """Run the astrometry.net localy using the given params.
 
         STDOUT and STDERR can be stored in variables for better check after
@@ -626,25 +705,51 @@ class AstrometrySolver():
             raise AstrometryNetUnsolvedField(filename)
 
 
-def create_xyls(fname, x, y, flux, imagew, imageh, header=None, dtype='f8'):
+def create_xyls(
+    fname: _PathLike,
+    x: _npt.ArrayLike,
+    y: _npt.ArrayLike,
+    flux: _npt.ArrayLike,
+    imagew: int,
+    imageh: int,
+    header: _HeaderLike | None=None,
+    dtype: _npt.DTypeLike='f8',
+) -> None:
     """Create and save the xyls file to run in astrometry.net
 
     Parameters
     ----------
-    fname: str
+    fname
         The path to save the .xyls file.
-    x: array_like
-        X coordinates of the sources.
-    y: array_like
-        Y coordinates of the sources.
-    flux: array_like
+    x
+        Source x positions in one-based FITS pixels, written unchanged.
+    y
+        Source y positions in one-based FITS pixels, written unchanged.
+    flux
         Estimated flux of the sources.
-    imagew: float or int
-        Width of the original image. `IMAGEW` header field of .xyls
-    imageh: float or int
-        Height of the original image. `IMAGEH` header field of .xyls
-    dtype: `~numpy.dtype`, optional
+    imagew
+        Width of the original image. ``IMAGEW`` header field of .xyls
+    imageh
+        Height of the original image. ``IMAGEH`` header field of .xyls
+    header
+        Optional header passed to the primary FITS HDU. Image dimensions are
+        stored separately on the binary-table HDU.
+    dtype
         Data type of the fields. Default: 'f8'
+
+    Examples
+    --------
+    >>> from pathlib import Path
+    >>> from tempfile import TemporaryDirectory
+    >>> from astropy.io import fits
+    >>> from astropop.astrometry import create_xyls
+    >>> with TemporaryDirectory() as directory:
+    ...     filename = Path(directory) / 'sources.xyls'
+    ...     # Positions are already one-based FITS pixels; rows sort by flux.
+    ...     create_xyls(filename, [11., 21.], [16., 26.], [100., 200.], 32, 32)
+    ...     with fits.open(filename) as hdus:
+    ...         print(hdus[1].data['x'].tolist())
+    [21.0, 11.0]
     """
     head = {'IMAGEW': imagew,
             'IMAGEH': imageh}
@@ -658,43 +763,52 @@ def create_xyls(fname, x, y, flux, imagew, imageh, header=None, dtype='f8'):
     f.writeto(fname, output_verify="ignore")
 
 
-def solve_astrometry_xy(x, y, flux, width, height,
-                        image_header=None, options=None,
-                        command=_solve_field,
-                        **kwargs):
+def solve_astrometry_xy(
+    x: _npt.ArrayLike,
+    y: _npt.ArrayLike,
+    flux: _npt.ArrayLike,
+    width: int,
+    height: int,
+    image_header: _HeaderLike | None=None,
+    options: dict[str, _t.Any] | None=None,
+    command: _PathLike | SolveFieldCommand | None=_solve_field,
+    **kwargs: _t.Any,
+) -> AstrometricSolution:
     """Solve astrometry from a (x,y) sources list using astrometry.net.
 
     Parameters
     ----------
-    x: array-like
-        x positions of the sources in the image.
-    y: array-like
-        y positions of the sources in the image.
-    flux: array_like
+    x
+        Source x positions in FITS one-based pixels. Add one to zero-based
+        detection coordinates.
+    y
+        Source y positions in FITS one-based pixels. Add one to zero-based
+        detection coordinates.
+    flux
         Estimated fluxes of the sources. A higher value indicates a brighter
         star.
-    width: int
-        Image width.
-    height: int
-        Image height.
-    image_header: `~astropy.fits.Header` (optional)
+    width
+        Image width in pixels (number of columns).
+    height
+        Image height in pixels (number of rows).
+    image_header
         Original image header.
-    options: dict
+    options
         Dictionary of ``solve-field`` options. See
-        `~astropop.astrometry.astrometrynet.print_options_help` for all
+        `~astropop.astrometry.astrometrynet.get_options_help` for all
         available options. The most useful are:
         - center or ra and dec: field center
         - radius: maximum search radius
         - scale: pixel scale in arcsec/pixel
         - tweak-order: SIP order to fit
         - index-dir: path to index files
-    command: str
+    command
         Full path of astrometry.net ``solve-field`` command.
 
     Returns
     -------
-    `~astropop.astrometry.AstrometricSolution`
-        Astrometric solution ot the field.
+    result
+        Astrometric solution of the field.
     """
     options = options or {}
     if image_header is not None:
@@ -710,29 +824,33 @@ def solve_astrometry_xy(x, y, flux, width, height,
     return solver.solve_field(f.name, options=options, **kwargs)
 
 
-def solve_astrometry_framedata(frame, options=None, command=_solve_field,
-                               **kwargs):
+def solve_astrometry_framedata(
+    frame: _FrameData,
+    options: dict[str, _t.Any] | None=None,
+    command: _PathLike | SolveFieldCommand | None=_solve_field,
+    **kwargs: _t.Any,
+) -> AstrometricSolution:
     """Solve astrometry from a `~astropop.framedata.FrameData`.
 
     Parameters
     ----------
-    frame: `~astropop.framedata.FrameData`
+    frame
         Image to be solved.
-    options: dict
+    options
         Dictionary of ``solve-field`` options. See
-        `~astropop.astrometry.astrometrynet.print_options_help` for all
+        `~astropop.astrometry.astrometrynet.get_options_help` for all
         available options. The most useful are:
         - center or ra and dec: field center
         - radius: maximum search radius
         - scale: pixel scale in arcsec/pixel
         - tweak-order: SIP order to fit
         - index-dir: path to index files
-    command: str
+    command
         Full path of astrometry.net ``solve-field`` command.
 
     Returns
     -------
-    `~astropop.astrometry.AstrometricSolution`
+    result
         Astrometric solution ot the field.
     """
     f = NamedTemporaryFile(suffix='.fits')
@@ -742,29 +860,33 @@ def solve_astrometry_framedata(frame, options=None, command=_solve_field,
     return solver.solve_field(f.name, options=options, **kwargs)
 
 
-def solve_astrometry_image(filename, options=None, command=_solve_field,
-                           **kwargs):
+def solve_astrometry_image(
+    filename: _PathLike,
+    options: dict[str, _t.Any] | None=None,
+    command: _PathLike | SolveFieldCommand | None=_solve_field,
+    **kwargs: _t.Any,
+) -> AstrometricSolution:
     """Solve astrometry from an image using astrometry.net.
 
     Parameters
     ----------
-    filename: str
+    filename
         Path to the image to solve.
-    options: dict
+    options
         Dictionary of ``solve-field`` options. See
-        `~astropop.astrometry.astrometrynet.print_options_help` for all
+        `~astropop.astrometry.astrometrynet.get_options_help` for all
         available options. The most useful are:
         - center or ra and dec: field center
         - radius: maximum search radius
         - scale: pixel scale in arcsec/pixel
         - tweak-order: SIP order to fit
         - index-dir: path to index files
-    command: str
+    command
         Full path of astrometry.net ``solve-field`` command.
 
     Returns
     -------
-    `~astropop.astrometry.AstrometricSolution`
+    result
         Astrometric solution ot the field.
     """
     options = options or {}
@@ -772,28 +894,33 @@ def solve_astrometry_image(filename, options=None, command=_solve_field,
     return solver.solve_field(filename, options=options, **kwargs)
 
 
-def solve_astrometry_hdu(hdu, options=None, command=_solve_field, **kwargs):
-    """Solve astrometry from a `~astropy.fits.ImageHDU` using astrometry.net.
+def solve_astrometry_hdu(
+    hdu: _ImageHDU,
+    options: dict[str, _t.Any] | None=None,
+    command: _PathLike | SolveFieldCommand | None=_solve_field,
+    **kwargs: _t.Any,
+) -> AstrometricSolution:
+    """Solve astrometry from a `~astropy.io.fits.ImageHDU` using astrometry.net.
 
     Parameters
     ----------
-    hdu: `astropy.fits.ImageHDU`
+    hdu
         FITS hdu containing the image to solve.
-    options: dict
+    options
         Dictionary of ``solve-field`` options. See
-        `~astropop.astrometry.astrometrynet.print_options_help` for all
+        `~astropop.astrometry.astrometrynet.get_options_help` for all
         available options. The most useful are:
         - center or ra and dec: field center
         - radius: maximum search radius
         - scale: pixel scale in arcsec/pixel
         - tweak-order: SIP order to fit
         - index-dir: path to index files
-    command: str
+    command
         Full path of astrometry.net ``solve-field`` command.
 
     Returns
     -------
-    `~astropop.astrometry.AstrometricSolution`
+    result
         Astrometric solution ot the field.
     """
     options = options or {}

@@ -1,6 +1,14 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 """Query and match objects in Vizier catalogs."""
 
+from __future__ import annotations
+
+import typing as _t
+from inspect import cleandoc as _cleandoc
+from astropy.table import Table as _Table
+from ..math import QFloat
+from .._typing import PathLike as _PathLike
+
 from os import path, listdir
 import numpy as np
 import yaml
@@ -17,7 +25,11 @@ from ..math import qfloat
 __all__ = ['VizierSourcesCatalog', 'list_vizier_catalogs']
 
 
-def _print_help(name, conf, available_filters):
+def _print_help(
+    name: str,
+    conf: _t.Mapping[str, _t.Any],
+    available_filters: _t.Sequence[str] | None,
+) -> str:
     """Print the help for a catalog."""
     help = f"{name}: {conf['description']}\n"
     help += f"bibcode: {conf['bibcode']}\n\n"
@@ -35,7 +47,7 @@ class VizierSourcesCatalog(_OnlineSourcesCatalog):
 
     Parameters
     ----------
-    config_file: string or dict
+    config_file
         Yaml configuration file containing the parameters to be used
         for catalog queries, like table id, column names, etc.
     center: string, tuple or `~astropy.coordinates.SkyCoord`
@@ -43,12 +55,10 @@ class VizierSourcesCatalog(_OnlineSourcesCatalog):
         If center is a string, can be an object name or the string
         containing the object coordinates. If it is a tuple, have to be
         (ra, dec) coordinates, in hexa or decimal degrees format.
-    radius: string, float, `~astropy.coordinates.Angle` (optional)
-        The radius to search. If None, the query will be performed as
-        single object query mode. Else, the query will be performed as
-        field mode. If a string value is passed, it must be readable by
-        astropy.coordinates.Angle. If a float value is passed, it will
-        be interpreted as a decimal degree radius.
+    radius : str, float or `~astropy.coordinates.Angle`
+        Required cone-search radius; None is not supported. Numeric values
+        are degrees. Strings must include angular units understood by
+        ``astropy.coordinates.Angle``; angular Quantities are also accepted.
     band: string or list(string) (optional)
         Filters to query photometric informations. If None, photometric
         informations will be disabled. If ``'all'`` (default), all
@@ -57,11 +67,12 @@ class VizierSourcesCatalog(_OnlineSourcesCatalog):
 
     Raises
     ------
-    ValueError:
+    ValueError
         If a ``band`` not available in the filters is passed.
     """
 
-    def __init__(self, config_file, *args, **kwargs):
+    def __init__(self, config_file: _PathLike, *args: _t.Any, **kwargs: _t.Any) -> None:
+        """Load the YAML schema, configure VizieR and query the requested field."""
         self.name = path.splitext(path.basename(config_file))[0]
         with open(config_file, 'r') as f:
             self._conf = yaml.safe_load(f)
@@ -76,14 +87,15 @@ class VizierSourcesCatalog(_OnlineSourcesCatalog):
         self._setup_catalog()
         super().__init__(*args, **kwargs)
 
-    def _get_available_filters(self):
+    def _get_available_filters(self) -> list[str] | None:
         """Get the available filters."""
         filters = self._conf.get('available_filters', None)
         if filters is None:
             return
         return list(filters.keys())
 
-    def _get_mag_columns(self):
+    def _get_mag_columns(self) -> list[str]:
+        """Expand configured magnitude and error templates for every available band."""
         mag_conf = self._conf.get('magnitudes')
         mag_cols = []
         if mag_conf is not None:
@@ -96,7 +108,7 @@ class VizierSourcesCatalog(_OnlineSourcesCatalog):
                                  for i in self._available_filters])
         return mag_cols
 
-    def _filter_magnitudes(self, query, band):
+    def _filter_magnitudes(self, query: _Table, band: str) -> QFloat:
         """Get the qfloat magnitudes."""
         mag_key = self._conf['magnitudes']['mag_column'].format(band=band)
         err_mag_key = self._conf['magnitudes']['err_mag_column']
@@ -114,7 +126,12 @@ class VizierSourcesCatalog(_OnlineSourcesCatalog):
                 mag_err /= 100.0
         return qfloat(mag, uncertainty=mag_err, unit=unit)
 
-    def _filter_coordinates(self, query, obstime, frame):
+    def _filter_coordinates(
+        self,
+        query: _Table,
+        obstime: Time | None,
+        frame: str,
+    ) -> SkyCoord:
         """Get the SkyCoord coordinates."""
         rakey = self._conf['coordinates']['ra_column']
         deckey = self._conf['coordinates']['dec_column']
@@ -130,7 +147,7 @@ class VizierSourcesCatalog(_OnlineSourcesCatalog):
                             pm_ra_cosdec=pmra, pm_dec=pmdec)
         return SkyCoord(ra, dec, frame=frame, obstime=obstime)
 
-    def _filter_ids(self, query):
+    def _filter_ids(self, query: _Table) -> list[str]:
         """Get the id names for the objects."""
         ids = self._conf['ids']
         if ids is None:
@@ -150,7 +167,7 @@ class VizierSourcesCatalog(_OnlineSourcesCatalog):
             ids = [f'{prepend} {string_fix(i)}' for i in ids]
         return ids
 
-    def _filter_epoch(self, query):
+    def _filter_epoch(self, query: _Table) -> Time | None:
         """Get the epoch for the coordinates."""
         ep = self._conf.get('epoch', None)
         if ep is None:
@@ -166,11 +183,17 @@ class VizierSourcesCatalog(_OnlineSourcesCatalog):
                 if i in query.colnames:
                     return Time(query[i], format=ep['format'])
 
-    def _setup_catalog(self):
+    def _setup_catalog(self) -> None:
+        """Configure the VizieR table and columns without a client-side row limit."""
         self._v = Vizier(catalog=self._table, columns=self._columns)
         self._v.ROW_LIMIT = -1
 
-    def _do_query(self):
+    def _do_query(self) -> None:
+        """Query VizieR and populate the catalog using its configured schema.
+
+        Rename configured column aliases before extracting identifiers, photometry,
+        coordinates and epoch. An empty table list raises RuntimeError.
+        """
         q = astroquery_query(self._v.query_region,
                              self._center,
                              radius=self._radius)
@@ -195,12 +218,29 @@ class VizierSourcesCatalog(_OnlineSourcesCatalog):
 
         SourcesCatalog.__init__(self, sk, ids=ids, mag=mag)
 
-    def help(self):
+    def help(self) -> str:
         """Print the help for the catalog."""
         return _print_help(self.name, self._conf, self._available_filters)
 
 
-def list_vizier_catalogs():
+def list_vizier_catalogs() -> str:
+    """Describe the bundled VizieR catalog configurations.
+
+    Returns
+    -------
+    catalogs
+        ReStructuredText containing catalog names, bibliographic references and
+        descriptions loaded from the local YAML files. No online query is made.
+
+    Examples
+    --------
+    >>> from astropop.catalogs.vizier import list_vizier_catalogs
+
+    >>> # This inspects local definitions without contacting VizieR.
+    >>> descriptions = list_vizier_catalogs()
+    >>> print('ucac4' in descriptions, 'apass9' in descriptions)
+    True True
+    """
     root = path.join(path.dirname(__file__), 'vizier_catalogs')
     catalogs = 'Available pre-configured Vizier catalogs are:\n'
     for i in listdir(root):
@@ -212,15 +252,22 @@ def list_vizier_catalogs():
     return catalogs
 
 
-list_vizier_catalogs.__doc__ = "List available vizier catalogs\n\n"
-list_vizier_catalogs.__doc__ += "Notes\n-----\n" + list_vizier_catalogs()
+list_vizier_catalogs.__doc__ = (_cleandoc(list_vizier_catalogs.__doc__)
+                               + "\n\nNotes\n-----\n" + list_vizier_catalogs())
 
 
-def __getattr__(name):
+def __getattr__(name: str) -> type[VizierSourcesCatalog]:
+    """Create a catalog subclass for a bundled configuration name.
+
+    The returned class binds the corresponding YAML file and exposes catalog
+    help without querying a field. Unknown names raise AttributeError.
+    """
     filename = path.join(path.dirname(__file__), f'vizier_catalogs/{name}.yml')
     if path.exists(filename):
         class NewViz(VizierSourcesCatalog):
-            def __init__(self, *args, **kwargs):
+            """Bind a bundled YAML configuration to the VizieR catalog interface."""
+            def __init__(self, *args: _t.Any, **kwargs: _t.Any) -> None:
+                """Query the configured catalog with the supplied field arguments."""
                 super(NewViz, self).__init__(filename, *args, **kwargs)
 
         with open(filename, 'r') as f:
@@ -230,7 +277,8 @@ def __getattr__(name):
             available_filters = list(available_filters.keys())
 
         # help function accessed before instance creation
-        def help():
+        def help() -> str:
+            """Format the bound catalog description and available photometric bands."""
             return _print_help(name, conf, available_filters)
 
         NewViz.__doc__ = f"``{name}`` Vizier catalog."

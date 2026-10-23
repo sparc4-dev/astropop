@@ -1,6 +1,11 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 """Tools to handle memmaped arrays."""
 
+from __future__ import annotations
+
+import os as _os
+import numpy.typing as _npt
+
 import os
 import numpy as np
 
@@ -8,22 +13,26 @@ import numpy as np
 __all__ = ['create_array_memmap', 'delete_array_memmap', 'reset_memmap_array']
 
 
-def create_array_memmap(filename, data, dtype=None):
+def create_array_memmap(
+    filename: str | _os.PathLike[str] | None,
+    data: _npt.ArrayLike | None,
+    dtype: _npt.DTypeLike | None=None,
+) -> np.memmap | _npt.ArrayLike | None:
     """Create a memory map to an array data.
 
     Parameters
     ----------
-    filename : `string`, `~pathlib.Path`
+    filename
         Name of memmap file to be created.
-    data : array_like
+    data
         Data to be stored in the memmap.
-    dtype : `string`, `~numpy.dtype` or `None` (optional)
+    dtype
         `~numpy.dtype` compilant data type. If `None`, `data.dtype` will be
         used.
 
     Returns
     -------
-    memmap : `~numpy.memmap`
+    memmap
         Memmap object of cached data.
     """
     # scalars should not be memmaped
@@ -48,22 +57,26 @@ def create_array_memmap(filename, data, dtype=None):
     return memmap
 
 
-def delete_array_memmap(memmap, read=True, remove=False):
+def delete_array_memmap(
+    memmap: _npt.ArrayLike | None,
+    read: bool=True,
+    remove: bool=False,
+) -> _npt.ArrayLike | None:
     """Delete a memmap and read the data to a np.ndarray.
 
     Parameters
     ----------
-    memmap : array_like or `None`
+    memmap
         MemMap array to be deleted.
-    read : `bool` (optional)
+    read
         Read the data to memory before delete.
-    remove : `bool` (optional)
+    remove
         Close the mapping and delete the memmap file. References to the
         mapping, including views, must not be used afterwards.
 
     Returns
     -------
-    data : array_like or `None`
+    data
         Data read from memmap.
     """
     if memmap is None or np.isscalar(memmap):
@@ -88,19 +101,23 @@ def delete_array_memmap(memmap, read=True, remove=False):
     return data
 
 
-def reset_memmap_array(array, data, dtype=None):
+def reset_memmap_array(
+    array: _npt.ArrayLike | None,
+    data: _npt.ArrayLike | None,
+    dtype: _npt.DTypeLike | None=None,
+) -> _npt.ArrayLike | None:
     """Reset a memmap array to a new data.
 
     Parameters
     ----------
-    array : array_like
+    array
         MemMap array to be reseted.
-    data : array_like
+    data
         Data to be stored in the memmap.
 
     Returns
     -------
-    memmap : `~numpy.memmap`
+    memmap
         Memmap object of cached data.
     """
     # scalar not memmaped

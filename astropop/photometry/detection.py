@@ -1,5 +1,13 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 
+
+"""Detect stellar sources and estimate their point-spread-function widths."""
+from __future__ import annotations
+
+import typing as _t
+import numpy.typing as _npt
+from .._typing import ImageLike as _ImageLike
+from .._typing import NumberArray as _NumberArray
 import numpy as np
 from astropy.convolution import convolve
 from astropy.modeling.fitting import LevMarLSQFitter
@@ -16,71 +24,93 @@ from astropop.math.array import trim_array, xy2r
 __all__ = ['segfind', 'daofind', 'starfind', 'median_fwhm']
 
 
-def segfind(data, threshold, background, noise, mask=None, fwhm=None, npix=5,
-            deblend=True):
+def segfind(
+    data: _ImageLike,
+    threshold: float,
+    background: _NumberArray,
+    noise: _NumberArray,
+    mask: _ImageLike | None=None,
+    fwhm: float | None=None,
+    npix: int=5,
+    deblend: bool=True,
+) -> Table:
     """Find sources using `~photutils.segmentation`.
 
     Parameters
     ----------
-    data: array_like
+    data
         2D array containing the image to extract the sources.
-    threshold: `int` or `float`
+    threshold
         Minumim number of standard deviations above the background level where
         the algorithm will start to consider the sources.
-    background: `float` or `~numpy.ndarray`
+    background
         Background level estimation. Can be a single global value, or a 2D
         array with by-pixel values.
-    noise: `float` or `~numpy.ndarray`
+    noise
         RMS or any other noise estimation to use in the detection. Can be a
         single global value, or a 2D array with by-pixel values.
-    mask: array_like (optional)
+    mask
         Boolean mask where 1 pixels are masked out in the background
         calculation.
         Default: `None`
-    fwhm: `float` (optional)
+    fwhm
         FWHM to generate the convolution kernel. If `None`, no convolution
         will be performed.
         Default: `None`
-    npix: `int` (optional)
+    npix
         Minimum number of connected pixels to consider a source.
-        Default: `5`
-    deblend: `bool` (optional)
+        Default: ``5``
+    deblend
         If `True`, the algorithm will try to deblend the sources.
         Default: `True`
 
     Returns
     -------
-    sources: `astropy.table.Table`
+    sources
         Table with the sources found. The table will contain the following
         columns:
 
         - ``id``: source ID
         - ``x``, ``y``: x and y coordinates of the source centroid
-        - ``xcentroid``, ``ycentroid``: same as ``x`` and ``y``
         - ``peak``: value of the source peak
         - ``flux``: integrated (background-subtracted) source flux within the
           segment
-        - ``sigma_x``, ``sigma_y``: standard deviation of the source elipsoid
-          along x and y
+        - ``sigma_x``, ``sigma_y``: one-sigma semimajor and semiminor axis
+          lengths, respectively, from source second moments
         - ``theta``: rotation angle of the source elipsoid (degrees) from the
           positive x axis
-        - ``fwhm``: FWHM of circular gaussian fit of the source
+        - ``fwhm``: Circularized FWHM derived from source second moments
         - ``eccentricity``: The eccentricity of the 2D Gaussian function that
           has the same second-order moments as the source.
         - ``elongation``: The ratio of the lengths of the semimajor and
           semiminor axes.
-        - ``ellipticity``: 1.0 minus the elongation.
+        - ``ellipticity``: 1.0 minus the semiminor-to-semimajor axis ratio.
         - ``cxx``, ``cyy``, ``cxy``: SourceExtractor ellipse parameters.
           See [SourceExtractor docs]_
         - ``area``: area of the segment, in pixels
         - ``label``: label identifying the segment to which the source belongs.
-          Can be used as y-sorted index.
+          Retains the segmentation label after sorting rows by flux.
 
     References
     ----------
     .. [SourceExtractor docs] Ellipse parameters
        (https://sextractor.readthedocs.io/en/latest/Position.html\
         #ellipse-parameters-cxx-cyy-cxy)
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> y, x = np.indices((32, 32))
+    >>> pixels = 100 + 500 * np.exp(-((x - 16.)**2 + (y - 16.)**2) / 8)
+
+    >>> from astropop.photometry import segfind
+
+    >>> # Supply the sky level separately from its RMS noise.
+    >>> sources = segfind(pixels, threshold=5, background=100., noise=2., npix=5, deblend=False)
+    >>> print(len(sources))
+    1
+    >>> print(f"({sources['x'][0]:.1f}, {sources['y'][0]:.1f})")
+    (16.0, 16.0)
     """
     # algorithm needs the sky-subtracted image
     # also, force create a new instance of image
@@ -133,7 +163,13 @@ def segfind(data, threshold, background, noise, mask=None, fwhm=None, npix=5,
     return res
 
 
-def _dao_source_morphology(data, x, y, r, mask=None):
+def _dao_source_morphology(
+    data: _ImageLike,
+    x: _npt.ArrayLike,
+    y: _npt.ArrayLike,
+    r: float,
+    mask: _ImageLike | None=None,
+) -> Table:
     """Measure each DAO source within its own circular segmentation mask."""
     columns = ['segment_flux', 'fwhm', 'eccentricity', 'elongation',
                'ellipticity', 'ellipse_cxx', 'ellipse_cyy', 'ellipse_cxy']
@@ -154,45 +190,54 @@ def _dao_source_morphology(data, x, y, r, mask=None):
     return vstack(tables, metadata_conflicts='silent')
 
 
-def daofind(data, threshold, background, noise, fwhm,
-            mask=None, sharp_limit=(0.2, 1.0), round_limit=(-1.0, 1.0),
-            exclude_border=True, positions=None):
+def daofind(
+    data: _ImageLike,
+    threshold: float,
+    background: _NumberArray,
+    noise: _NumberArray,
+    fwhm: float,
+    mask: _ImageLike | None=None,
+    sharp_limit: tuple[float, float] | None=(0.2, 1.0),
+    round_limit: tuple[float, float] | None=(-1.0, 1.0),
+    exclude_border: bool=True,
+    positions: _npt.ArrayLike | None=None,
+) -> Table:
     """Find sources using DAOfind algorithm.
 
     Parameters
     ----------
-    data: array_like
+    data
         2D array containing the image to extract the sources.
-    threshold: `int` or `float`
+    threshold
         Minumim number of standard deviations above the background level where
         the algorithm will start to consider the sources.
-    background: `float` or `~numpy.ndarray`
+    background
         Background level estimation. Can be a single global value, or a 2D
         array with by-pixel values.
-    noise: `float` or `~numpy.ndarray`
+    noise
         RMS or any other noise estimation to use in the detection. Can be a
         single global value, or a 2D array with by-pixel values. Due to
         limitations of photutils, if a 2D array is provided, it will be
         converted to a scalar using the median.
-    fwhm: `float`
+    fwhm
         Full width at half maximum: to be used in the convolve filter.
-    sharp_limit: array_like or `None` (optional)
+    sharp_limit
         Low and high cutoff for the sharpness statistic. `None` will disable
         the sharpness filtering.
         Default: (0.2, 1.0)
-    round_limit : array_like or `None` (optional)
+    round_limit
         Low and high cutoff for the roundness statistic. `None` will disable
         the roundness filtering.
         Default: (-1.0,1.0)
-    mask: array_like (optional)
+    mask
         Boolean mask where 1 pixels are masked out in the background
         calculation.
         Default: `None`
-    exclude_border: `bool` (optional)
+    exclude_border
         If `True`, sources found within half the size of the convolution
         kernel from the image borders are excluded.
         Default: `True`
-    positions: array_like (optional)
+    positions
         List of (x, y) positions where to look for sources. If provided, the
         source finding step will be ignored and the centroids will be refined
         and filtered.
@@ -200,7 +245,7 @@ def daofind(data, threshold, background, noise, fwhm,
 
     Returns
     -------
-    sources: `astropy.table.Table`
+    sources
         Table with the sources found. The table will contain the following
         columns:
 
@@ -210,27 +255,36 @@ def daofind(data, threshold, background, noise, fwhm,
         - ``peak``: value of the source peak
         - ``flux``: integrated (background-subtracted) source flux within the
           segment
-        - ``fwhm``: FWHM of circular gaussian fit of the source
+        - ``fwhm``: Circularized FWHM derived from source second moments
         - ``sharpness``: The source DAOFIND sharpness statistic.
-        - ``roundness``: The source DAOFIND roundness statistic. Maximum
-          between ``g_roundness`` and ``r_roundness``.
+        - ``roundness``: The source DAOFIND roundness statistic. Maximum absolute
+          value of ``g_roundness`` and ``s_roundness``.
         - ``g_roundness``: The DAOFIND roundness statistic based on Gaussian
           marginal fit. Good for assymetries aligned with the x or y axis.
         - ``s_roundness``: The DAOFIND roundness statistic based on symmetry
           of the source. Good for assymetries aligned with the diagonal.
-        - ``sigma_x``, ``sigma_y``: standard deviation of the source elipsoid
-          along x and y
-        - ``theta``: rotation angle of the source elipsoid (degrees) from the
-          positive x axis
-        - ``fwhm``: FWHM of circular gaussian fit of the source
         - ``eccentricity``: The eccentricity of the 2D Gaussian function that
           has the same second-order moments as the source.
         - ``elongation``: The ratio of the lengths of the semimajor and
           semiminor axes.
-        - ``ellipticity``: 1.0 minus the elongation.
+        - ``ellipticity``: 1.0 minus the semiminor-to-semimajor axis ratio.
         - ``cxx``, ``cyy``, ``cxy``: SourceExtractor ellipse parameters.
           See [SourceExtractor docs]_
-        - ``area``: area of the segment, in pixels
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> y, x = np.indices((32, 32))
+    >>> pixels = 100 + 500 * np.exp(-((x - 16.)**2 + (y - 16.)**2) / 8)
+
+    >>> from astropop.photometry import daofind
+
+    >>> # Supply the sky level separately from its RMS noise.
+    >>> sources = daofind(pixels, threshold=5, background=100., noise=2., fwhm=4.71)
+    >>> print(len(sources))
+    1
+    >>> print(f"({sources['x'][0]:.1f}, {sources['y'][0]:.1f})")
+    (16.0, 16.0)
     """
     # always use background subtracted data
     d = data-background
@@ -283,82 +337,78 @@ def daofind(data, threshold, background, noise, fwhm,
     return res
 
 
-def starfind(data, threshold, background, noise, fwhm=None, mask=None,
-             sharp_limit=(0.2, 1.0), round_limit=(-1.0, 1.0),
-             exclude_border=True):
+def starfind(
+    data: _ImageLike,
+    threshold: float,
+    background: _NumberArray,
+    noise: _NumberArray,
+    fwhm: float | None=None,
+    mask: _ImageLike | None=None,
+    sharp_limit: tuple[float, float] | None=(0.2, 1.0),
+    round_limit: tuple[float, float] | None=(-1.0, 1.0),
+    exclude_border: bool=True,
+) -> Table:
     """Find stars using daofind AND sepfind.
 
     Parameters
     ----------
-    data: array_like
+    data
         2D array containing the image to extract the sources.
-    threshold: `int` or `float`
+    threshold
         Minumim number of standard deviations above the background level where
         the algorithm will start to consider the sources.
-    background: `float` or `~numpy.ndarray`
+    background
         Background level estimation. Can be a single global value, or a 2D
         array with by-pixel values.
-    noise: `float` or `~numpy.ndarray`
+    noise
         RMS or any other noise estimation to use in the detection. Can be a
         single global value, or a 2D array with by-pixel values. Due to
         limitations of photutils, if a 2D array is provided, it will be
         converted to a scalar using the median.
-    fwhm: `float` (optional)
+    fwhm
         Initial guess of the FWHM to be used in the convolve filter. No need to
         be precise. Will be recomputed in the function.
         Default: `None`
-    sharp_limit: array_like or `None` (optional)
+    sharp_limit
         Low and high cutoff for the sharpness statistic. `None` will disable
         the sharpness filtering.
         Default: (0.2, 1.0)
-    round_limit : array_like or `None` (optional)
+    round_limit
         Low and high cutoff for the roundness statistic. `None` will disable
         the roundness filtering.
         Default: (-1.0,1.0)
-    mask: array_like (optional)
+    mask
         Boolean mask where 1 pixels are masked out in the background
         calculation.
         Default: `None`
-    exclude_border: `bool` (optional)
+    exclude_border
         If `True`, sources found within half the size of the convolution
         kernel from the image borders are excluded.
         Default: `True`
 
     Returns
     -------
-    sources: `astropy.table.Table`
-        Table with the sources found. The table will contain the following
-        columns:
+    sources
+        The same columns as `daofind`, sorted by decreasing flux. Segmentation
+        is used to estimate a representative FWHM before DAO detection;
+        segmentation-only columns such as ``area`` and ``label`` are not
+        returned. The estimated FWHM is stored in ``sources.meta`` under
+        ``'astropop fwhm'``.
 
-        - ``id``: source ID
-        - ``x``, ``y``: x and y coordinates of the source centroid
-        - ``xcentroid``, ``ycentroid``: same as ``x`` and ``y``
-        - ``peak``: value of the source peak
-        - ``flux``: integrated (background-subtracted) source flux within the
-          segment
-        - ``fwhm``: FWHM of circular gaussian fit of the source
-        - ``sharpness``: The source DAOFIND sharpness statistic.
-        - ``roundness``: The source DAOFIND roundness statistic. Maximum
-          between ``g_roundness`` and ``r_roundness``.
-        - ``g_roundness``: The DAOFIND roundness statistic based on Gaussian
-          marginal fit. Good for assymetries aligned with the x or y axis.
-        - ``s_roundness``: The DAOFIND roundness statistic based on symmetry
-          of the source. Good for assymetries aligned with the diagonal.
-        - ``sigma_x``, ``sigma_y``: standard deviation of the source elipsoid
-          along x and y
-        - ``theta``: rotation angle of the source elipsoid (degrees) from the
-          positive x axis
-        - ``fwhm``: FWHM of circular gaussian fit of the source
-        - ``eccentricity``: The eccentricity of the 2D Gaussian function that
-          has the same second-order moments as the source.
-        - ``elongation``: The ratio of the lengths of the semimajor and
-          semiminor axes.
-        - ``ellipticity``: 1.0 minus the elongation.
-        - ``cxx``, ``cyy``, ``cxy``: SourceExtractor ellipse parameters.
-          See [SourceExtractor docs]_
-        - ``area``: area of the segment, in pixels
-        - ``label``: label identifying the segment to which the source belongs.
-          Can be used as y-sorted index.
+    Examples
+    --------
+    >>> import numpy as np
+    >>> y, x = np.indices((32, 32))
+    >>> pixels = 100 + 500 * np.exp(-((x - 16.)**2 + (y - 16.)**2) / 8)
+
+    >>> from astropop.photometry import starfind
+
+    >>> # Supply the sky level separately from its RMS noise.
+    >>> sources = starfind(pixels, threshold=5, background=100., noise=2.)
+    >>> print(len(sources))
+    1
+    >>> print(f"({sources['x'][0]:.1f}, {sources['y'][0]:.1f})")
+    (16.0, 16.0)
     """
     # First, we identify the sources with sepfind (fwhm independent)
     sources = segfind(data, threshold, background, noise, mask=mask)
@@ -376,22 +426,29 @@ def starfind(data, threshold, background, noise, fwhm=None, mask=None,
     return s
 
 
-def _fwhm_loop(model, data, x, y, xc, yc):
+def _fwhm_loop(
+    model: _t.Literal['gaussian', 'moffat'],
+    data: _ImageLike,
+    x: _npt.ArrayLike,
+    y: _npt.ArrayLike,
+    xc: float,
+    yc: float,
+) -> float:
     """
     Parameters
     ----------
-    model: `str`
+    model
         Choose a Gaussian or Moffat model.
-    data: array_like
+    data
         2D array containing the image to extract the source.
-    x, y: array_like
+    x, y
         x and y indexes ofthe pixels in the image.
-    xc, yc: array_like
+    xc, yc
         x and y initial guess positions of the source.
 
     Returns
     -------
-    fwhm: `float`
+    fwhm
         FWHM of the source.
 
     Notes
@@ -421,24 +478,55 @@ def _fwhm_loop(model, data, x, y, xc, yc):
         return np.nan
 
 
-def median_fwhm(data, x, y, box_size=25, model='gaussian', min_fwhm=3.0):
+def median_fwhm(
+    data: _ImageLike,
+    x: _npt.ArrayLike,
+    y: _npt.ArrayLike,
+    box_size: int=25,
+    model: _t.Literal['gaussian', 'moffat']='gaussian',
+    min_fwhm: float=3.0,
+) -> float:
     """Calculate the median FWHM of the image with Gaussian or Moffat fit.
 
     Parameters
     ----------
-    data: array_like
+    data
         2D array containing the image to extract the source.
-    x, y: array_like
+    x, y
         x, y centroid position.
-    box_size: `int` (optional)
+    box_size
         Size of the box, in pixels, to fit the model.
         Default: 25
-    model: {`gaussian`, `moffat`}
+    model
         Choose a Gaussian or Moffat model.
-        Default: `gausiann`
-    min_fwhm: float
+        Default: ``gaussian``
+    min_fwhm
         Minimum value for FWHM.
         Default: 3.0
+
+    Returns
+    -------
+    fwhm
+        Median fitted source FWHM in pixels. Nonfinite fits are ignored by
+        the median. If the median is nonfinite or below ``min_fwhm``, returns
+        ``min_fwhm``. Empty or all-invalid fits may emit a NumPy warning.
+
+    Raises
+    ------
+    ValueError
+        If ``model`` is neither ``'gaussian'`` nor ``'moffat'`` and a fit is
+        attempted.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> y, x = np.indices((32, 32))
+    >>> pixels = 100 + 500 * np.exp(-((x - 16.)**2 + (y - 16.)**2) / 8)
+
+    >>> from astropop.photometry import median_fwhm
+    >>> width = median_fwhm(pixels, [16.], [16.], model='gaussian')
+    >>> print(f'{width:.2f} pixels')
+    4.71 pixels
     """
     indices = np.indices(data.shape)
     rects = [trim_array(data, box_size, (xi, yi), indices=indices)
@@ -452,7 +540,7 @@ def median_fwhm(data, x, y, box_size=25, model='gaussian', min_fwhm=3.0):
     return fwhm
 
 
-def calc_fwhm(*args, **kwargs):
+def calc_fwhm(*args: _t.Any, **kwargs: _t.Any) -> float:
     """Calculate the median FWHM of the image with Gaussian or Moffat fit.
 
     Parameters
@@ -466,7 +554,7 @@ def calc_fwhm(*args, **kwargs):
         Default: 25
     model: {`gaussian`, `moffat`}
         Choose a Gaussian or Moffat model.
-        Default: `gausiann`
+        Default: ``gaussian``
     min_fwhm: float
         Minimum value for FWHM.
         Default: 3.0

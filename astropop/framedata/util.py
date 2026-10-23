@@ -1,6 +1,11 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 """Utilities for loading data as FrameData."""
 
+from __future__ import annotations
+
+import typing as _t
+from .._typing import ImageInput as _ImageInput
+
 import os
 import numpy as np
 from astropy.io import fits
@@ -18,15 +23,15 @@ _fits_kwargs = ['hdu', 'unit', 'hdu_uncertainty',
                 'hdu_mask', 'unit_key']
 
 
-def read_framedata(obj, copy=False, **kwargs):
+def read_framedata(obj: _ImageInput, copy: bool=False, **kwargs: _t.Any) -> FrameData:
     """Read an image into a FrameData container.
 
     Parameters
     ----------
-    obj : compatible image object
+    obj
         FrameData, FITS filename or path, image HDU, HDUList, CCDData,
         NumPy array, Quantity, or QFloat. Image data must be two-dimensional.
-    copy : bool, optional
+    copy
         If obj is already a FrameData, return a copy instead of the original.
         Default: False.
     **kwargs
@@ -38,7 +43,7 @@ def read_framedata(obj, copy=False, **kwargs):
 
     Returns
     -------
-    frame : `FrameData`
+    frame
         Loaded image. Optional uncertainty and flag storage follows the
         current configuration when constructing or copying a frame.
 
@@ -48,6 +53,21 @@ def read_framedata(obj, copy=False, **kwargs):
     HDU containing image data; pass an image HDU directly to select a specific
     image. Uncertainty extensions are interpreted as standard deviations.
     FITS and CCDData masks are imported as Boolean masks, not full pixel flags.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from astropy import units as u
+    >>> from astropop.framedata import read_framedata
+    >>> frame = read_framedata(np.ones((2, 3)) * u.adu, dtype='float32')
+    >>> print(frame.shape, frame.dtype.name, frame.unit)
+    (2, 3) float32 adu
+
+    >>> # Existing FrameData is returned directly unless a copy is requested.
+    >>> print(read_framedata(frame) is frame)
+    True
+    >>> print(read_framedata(frame, copy=True) is frame)
+    False
     """
     if isinstance(obj, FrameData):
         if copy:

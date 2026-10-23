@@ -1,6 +1,14 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 """Aperture photometry module."""
 
+from __future__ import annotations
+
+import typing as _t
+import numpy.typing as _npt
+from .._typing import ImageLike as _ImageLike
+from .._typing import NumberArray as _NumberArray
+from photutils.aperture import Aperture as _Aperture
+
 import numpy as np
 import warnings
 from enum import Flag
@@ -25,7 +33,17 @@ __all__ = ['aperture_photometry', 'PhotometryFlags']
 
 
 class PhotometryFlags(Flag):
-    """Flags for aperture photometry. Do not subclass it."""
+    """Flags for aperture photometry. Do not subclass it.
+
+    Examples
+    --------
+    >>> from astropop.photometry.aperture import PhotometryFlags as P
+    >>> status = P.SATURATED_PIXEL_IN_APERTURE | P.REMOVED_PIXEL_IN_APERTURE
+
+    >>> # Decode whether the measured aperture included a saturated pixel.
+    >>> print(bool(status.value & P.SATURATED_PIXEL_IN_APERTURE.value))
+    True
+    """
 
     # 1: At least one pixel in the aperture was removed or masked
     REMOVED_PIXEL_IN_APERTURE = 1 << 0
@@ -53,7 +71,13 @@ class PhotometryFlags(Flag):
 PhotometryFlags.dtype = np.uint16
 
 
-def _err_out_of_bounds(shape, x, y, r, flag):
+def _err_out_of_bounds(
+    shape: tuple[int, int],
+    x: _npt.ArrayLike,
+    y: _npt.ArrayLike,
+    r: float,
+    flag: PhotometryFlags,
+) -> _npt.NDArray:
     """Detect when the aperture goes out of the image bounds."""
     # ensure r is positive
     r = np.absolute(r)
@@ -70,7 +94,12 @@ def _err_out_of_bounds(shape, x, y, r, flag):
     return flags
 
 
-def _err_pixel_flags(pixel_flags, apertures, flag_pixel, flag_aperture):
+def _err_pixel_flags(
+    pixel_flags: _ImageLike | None,
+    apertures: _Aperture,
+    flag_pixel: PixelMaskFlags,
+    flag_aperture: PhotometryFlags,
+) -> _npt.NDArray:
     """Detect when a pixel is flagged. Pixel flags is a 2D image flags."""
     flags = np.zeros(len(apertures), dtype=PhotometryFlags.dtype)
     if pixel_flags is None:
@@ -82,8 +111,17 @@ def _err_pixel_flags(pixel_flags, apertures, flag_pixel, flag_aperture):
     return flags
 
 
-def _calc_local_bkg(data, positions, r_in, r_out, error, bkg_method,
-                    sigma_clip, pixel_flags, mask):
+def _calc_local_bkg(
+    data: _ImageLike,
+    positions: _npt.ArrayLike,
+    r_in: float,
+    r_out: float,
+    error: _ImageLike | None,
+    bkg_method: _t.Literal['mmm', 'mode', 'median', 'mean'],
+    sigma_clip: float | None,
+    pixel_flags: _ImageLike | None,
+    mask: _ImageLike | None,
+) -> tuple[_NumberArray, _NumberArray, float, _npt.NDArray]:
     """Compute the background annulus for aperture photometry."""
     ann_ap = CircularAnnulus(positions, r_in=r_in, r_out=r_out)
 
@@ -123,7 +161,15 @@ def _calc_local_bkg(data, positions, r_in, r_out, error, bkg_method,
     return bkg, bkg_std, bkg_area, bkg_flags
 
 
-def _recenter_sources(data, x, y, r, limit, method, mask):
+def _recenter_sources(
+    data: _ImageLike,
+    x: _npt.ArrayLike,
+    y: _npt.ArrayLike,
+    r: float,
+    limit: float,
+    method: _t.Literal['com', 'gaussian', 'quadratic'],
+    mask: _ImageLike | None,
+) -> tuple[_npt.NDArray, _npt.NDArray, _npt.NDArray]:
     """Recenter the sources using photutils.centroids."""
     if method == 'com':
         func = centroid_com
@@ -160,89 +206,104 @@ def _recenter_sources(data, x, y, r, limit, method, mask):
     return x, y, error
 
 
-def aperture_photometry(data, x, y, r='auto', r_ann='auto',
-                        recenter_limit=None, recenter_method='com',
-                        gain=1.0, bkg_error=None, mask=None,
-                        bkg_method='mmm', bkg_sigma_clip=3.0,
-                        pixel_flags=None, box_size=11):
-    """Perform aperture photometry using sep. Output units (ADU or e-) will
-    be the considered the same as input.
+def aperture_photometry(
+    data: _ImageLike,
+    x: _npt.ArrayLike,
+    y: _npt.ArrayLike,
+    r: float | _t.Literal['auto']='auto',
+    r_ann: tuple[float, float] | _t.Literal['auto'] | None='auto',
+    recenter_limit: float | None=None,
+    recenter_method: _t.Literal['com', 'gaussian', 'quadratic']='com',
+    gain: float=1.0,
+    bkg_error: float | _ImageLike | None=None,
+    mask: _ImageLike | None=None,
+    bkg_method: _t.Literal['mmm', 'mode', 'median', 'mean']='mmm',
+    bkg_sigma_clip: float | None=3.0,
+    pixel_flags: _ImageLike | None=None,
+    box_size: int=11,
+) -> Table:
+    """Perform circular-aperture photometry using Photutils.
 
-    This method just wraps the `~photutils.ApertureStats` method
+    Data are divided by gain before measurement. Returned fluxes are on this
+    divided-data scale; use gain=1 to preserve the input numerical scale.
+
+    This method just wraps the `~photutils.aperture.ApertureStats` method
     from photutils, assuming standard arguments and performing extra steps:
 
     - Calculate the total error (bkg+poisson) from input data, based on data
       and bkg_error.
-    - It assumes the `'exact'` method of subpixel sampling.
+    - It assumes the ``'exact'`` method of subpixel sampling.
     - Compute an optimal aperture radius, considering only the gaussian
-      background-only error. This radius is defined as r=0.6731*GFWHM.
+      background-only error. This radius is defined as r=0.6371*GFWHM.
     - Use sigma clipping for annulus background calculation.
     - Perform photometry flags generation. See
-      `~astropop.photometry.PhotometryFlags`.
+      `~astropop.photometry.aperture.PhotometryFlags`.
     - Sources recentering using `~photutils.centroids` methods. Only performed
-      if `recenter_limit` is not None.
+      if ``recenter_limit`` is not None.
 
     Most of the reduction is based on Astropy workshop sample notebooks [1]_.
 
     Parameters
     ----------
-    data : `~numpy.ndarray`
+    data
         2D image data for photometry
-    x, y : array_like
+    x, y
         Positions of the sources
-    r : float, `'auto'` (optional)
+    r
         Aperture radius, in pixels. If 'auto', the value will be estimated
         based in the median gaussian FWHM of the sources in the image
-        (r=0.6731*GFWHM).
+        (r=0.6371*GFWHM).
         Default: 'auto'
-    r_ann : array_like([float, float]), `'auto'` `None` (optional)
+    r_ann
         Annulus radii (r_in, r_out) for local background extraction in pixels.
         If 'auto', the annulus will be set based on aperture as (4*r, 6*r).
         If None, no local background subtraction will be performed.
         Default: 'auto'
-    recenter_limit : float (optional)
+    recenter_limit
         Maximum distance allowed to recenter the apertures. If None, no
         recentering will be performed.
         Default: `None`
-    recenter_method : 'com', 'gaussian' or 'quadratic' (optional)
-        Algorithm to recenter the apertures. If None, no recentering will be
-        performed. `'com'` method will use the center of mass of the aperture,
-        `'gaussian'` will use a gaussian fit to the aperture and `'quadratic'`
+    recenter_method
+        Algorithm used when recenter_limit is set. ``'com'`` uses the center
+        of mass of the aperture,
+        ``'gaussian'`` will use a gaussian fit to the aperture and ``'quadratic'``
         will use a quadratic fit to the aperture. See `~photutils.centroids`
         for more information.
         Default: 'com'
-    gain : float (optional)
-        Gain to correctly calculate the error.
+    gain
+        Divide data by this value before measurement and use it as the
+        effective gain for the Poisson error calculation. Returned fluxes
+        are not multiplied back by gain.
         Default: 1.0
-    bkg_error : float or `~numpy.ndarray` (optional)
+    bkg_error
         1-sigma gaussian error of the background-only error of input data.
-        If None, zero will be used.
+        Passed to the error calculation without division by gain; express
+        it on the divided-data scale. If None, zero will be used.
         Default: `None`
-    mask : `~numpy.ndarray` (optional)
+    mask
         Mask badpixels and problematic ccd areas.
         Default: `None`
-    pixel_flags : `~numpy.ndarray` (optional)
+    pixel_flags
         Array with flags for each pixel. If None, no flags will be used.
-        Flags must follow the `~astropop.frametada.PixelMaskFlags` standard.
+        Flags must follow the `~astropop.framedata.PixelMaskFlags` standard.
         Default: `None`
-    bkg_method : 'mmm', 'mode', 'median' or 'mean' (optional)
-        Algorith to calculate the background value. `'mode'` or `'mmm'`
+    bkg_method
+        Algorith to calculate the background value. ``'mode'`` or ``'mmm'``
         (mean, median, mode) are computed as (3*median - 2*mean) and
-        should be better for populated fields. `'median'` and `'mean'`
+        should be better for populated fields. ``'median'`` and ``'mean'``
         just compute these values in the annulus. All algorithms can use sigma
         clipping if ``bkg_sigma_clip`` is not None.
         Default: 'mmm'
-    bkg_sigma_clip : float, tuple(float, float) or `None` (optional)
-        Sigma clipping values for background calculation. If a tuple is
-        provided, the first value will be used as lower sigma and the second
-        as upper sigma. Only used if ``sky_algorithm='sigmaclip'``.
+    bkg_sigma_clip
+        Symmetric sigma threshold for annulus background clipping. None
+        disables clipping. Used when an annulus is requested.
         Default: 3.0
-    box_size : int (optional)
+    box_size
         Box size for median FWHM computation. Default is 11.
 
     Returns
     -------
-    res_ap : `~astropy.table.Table`
+    res_ap
         Table containing all aperture photometry informations.
 
         - ``x``, ``y``: centroids of the sources. If recentering is performed,
@@ -254,8 +315,8 @@ def aperture_photometry(data, x, y, r='auto', r_ann='auto',
           sources.
         - ``bkg``: background value by pixel
         - ``bkg_stddev``: background standard deviation inside the annulus
-        - ``bkg_area``: effective area of the annulus (considering mask and
-          clipping)
+        - ``bkg_area``: geometric annulus area, without a reduction for masked
+          or sigma-clipped pixels; NaN when no annulus is requested
         - ``flags``: flag for the sources
         - ``original_x``, ``original_y``: original input positions
 
@@ -272,17 +333,34 @@ def aperture_photometry(data, x, y, r='auto', r_ann='auto',
     Notes
     -----
     - The input data is divided by the gain prior to any calculation.
-    - The centroid of the sources is computed within a circular footprint with
-      radius ``2*r+1``. See `~photutils.centroids.centroid_sources` for more
+    - Recentering uses a circular footprint of radius ``r`` in a cutout of
+      width ``2*r+1``. See `~photutils.centroids.centroid_sources` for more
       information.
-    - Local background subtraction is performed entirely by photutils. So,
-      we do not touch it or compute any errors here.
+    - Pixel errors are computed before local-sky subtraction and passed to
+      Photutils for aperture integration. Uncertainty in the estimated annulus
+      sky is not separately propagated.
 
     References
     ----------
     .. [1] Astropy workshop sample notebook
         (https://github.com/astropy/astropy-workshop/blob/9eec8aeb04cec0de4ae\
          8a5056449b92ca4019e16/09-Photutils/03-aperture_local_bkgsub.ipynb)
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> y, x = np.indices((32, 32))
+    >>> pixels = 100 + 500 * np.exp(-((x - 16.)**2 + (y - 16.)**2) / 8)
+
+    >>> from astropop.photometry import aperture_photometry
+
+    >>> # Estimate local sky in an annulus outside the source aperture.
+    >>> measured = aperture_photometry(pixels, [16.], [16.], r=6.,
+    ...                                r_ann=(9., 13.), bkg_error=2., gain=1.)
+    >>> print(len(measured), measured['flags'].tolist())
+    1 [0]
+    >>> print(f"{measured['flux'][0]:.0f}")
+    12412
     """
     res_ap = Table()
 

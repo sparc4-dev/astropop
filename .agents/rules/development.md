@@ -16,6 +16,36 @@
 - Test interpreter shutdown in a child process. Never call `atexit._run_exitfuncs()` inside pytest: it can stop coverage measurement and execute unrelated handlers.
 - Keep helpers inside their owning test classes where practical. Put genuinely shared fixtures in `conftest.py`; avoid one-off test files when an existing module fits.
 
+## Documentation
+
+- Module chapters combine clear function/class explanations, simple examples,
+  technical details and an integrated Reference/API section. Keep one indexed
+  declaration per symbol; retain generated symbol pages under docs/api.
+- Group multi-module tutorials under real subsection indexes with inputs,
+  outputs and prerequisites. Place shared concepts with their owning modules;
+  do not restore parallel task-guide, concepts and API-reference trees.
+  Remove superseded source pages and update incoming links; do not retain
+  orphan pages or compatibility gateways.
+- Use `ImageLike` for 2D pixel-array inputs, with explicit scalar alternatives
+  where supported. Keep coordinate vectors, stacks and broad `ImageInput`
+  conversion contracts distinct.
+- Module guides must give clear, descriptive, human-readable explanations of
+  the module's functions and classes, with simple examples and useful outputs.
+  Preserve distinct construction/input examples when reorganizing or shortening
+  text; do not replace their teaching content with brief descriptions or API lists.
+- Tutorials must combine several APIs to complete a more complex task from
+  inputs through an inspected result. They complement module-level examples.
+- Include relevant technical details, algorithm assumptions and references to
+  original articles, scientific literature or technical documentation of widely
+  used software. Tie references to the actual implemented behavior.
+- Use inline `.. mermaid::` for workflow, dependency and ownership diagrams;
+  do not draw these schemes with Matplotlib. Keep them readable and captioned.
+- Use `.. plot::` with `:include-source: false` for scientific plots. Keep
+  plotting code in the RST whenever possible; use external Python scripts only
+  when functions defined in another file are needed.
+- Follow [the documentation skill](../skills/astropop-docs/SKILL.md) for the full
+  writing and validation requirements when changing documentation.
+
 ## Validation
 
 - Treat `pyproject.toml`, `tox.ini`, and `.github/workflows/` in this checkout as authoritative. Do not assume a test option or feature from another branch exists here.

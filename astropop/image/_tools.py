@@ -1,6 +1,12 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 """Tools for dealing with headers and flags."""
 
+from __future__ import annotations
+
+import typing as _t
+import numpy.typing as _npt
+from .._typing import HeaderLike as _HeaderLike
+
 import numpy as np
 from astropy.io.fits import Header
 
@@ -10,30 +16,46 @@ from ..framedata._compat import _normalize_and_strip_dict
 __all__ = ['merge_header', 'merge_flag']
 
 
-def merge_header(*headers, method='same', selected_keys=None):
+def merge_header(
+    *headers: _HeaderLike,
+    method: str='same',
+    selected_keys: _t.Sequence[str] | None=None,
+) -> Header:
     """Merge headers.
 
     Parameters
     ----------
-    headers: list of `astropy.io.fits.Header`
+    headers
         Headers to be merged.
-    method: {'only_equal', 'first', 'selected_keys', 'no_merge'}
+    method
         ``'only_equal'`` keeps keys present with equal values in all
         headers. ``'first'`` copies the first header. ``'selected_keys'`` keeps
         keys named in selected_keys, taking each key's first occurrence.
         ``'no_merge'`` returns an empty header.
-    selected_keys: list of str
+    selected_keys
         List of keywords to be merged. Used only if method is
         'selected_keys'.
 
     Returns
     -------
-    header: `dict`
+    header
         Merged header.
 
     Notes
     -----
     - All headers must have normalized keywords.
+
+    Examples
+    --------
+    >>> from astropy.io.fits import Header
+    >>> from astropop.image._tools import merge_header
+    >>> first = Header({'FILTER': 'R', 'EXPTIME': 10})
+    >>> second = Header({'FILTER': 'R', 'EXPTIME': 20})
+
+    >>> # Preserve only values that agree in both headers.
+    >>> merged = merge_header(first, second, method='only_equal')
+    >>> print(dict(merged))
+    {'FILTER': 'R'}
     """
     if method not in ['first', 'selected_keys', 'no_merge', 'only_equal']:
         raise ValueError(f'Unknown method {method}.')
@@ -82,22 +104,36 @@ def merge_header(*headers, method='same', selected_keys=None):
     return meta
 
 
-def merge_flag(*flags, method='or'):
+def merge_flag(
+    *flags: _npt.NDArray,
+    method: _t.Literal['or', 'and', 'no_merge']='or',
+) -> _npt.NDArray:
     """Merge flags from images.
 
     Parameters
     ----------
-    flags: list of `numpy.ndarray`
+    flags
         Flags to be merged.
-    method: {'or', 'and', 'no_merge'}
+    method
         ``'or'`` (default) combines flag bits by bitwise OR. ``'and'`` keeps
         only bits present in every input using bitwise AND. ``'no_merge'``
         returns zero flags with the first input's shape and dtype.
 
     Returns
     -------
-    flag: `numpy.ndarray`
+    flag
         Merged flag.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from astropop.image._tools import merge_flag
+    >>> first = np.array([1, 2], dtype='uint8')
+    >>> second = np.array([2, 2], dtype='uint8')
+    >>> print(merge_flag(first, second, method='or').tolist())
+    [3, 2]
+    >>> print(merge_flag(first, second, method='and').tolist())
+    [0, 2]
     """
     if method not in ['or', 'and', 'no_merge']:
         raise ValueError(f'Unknown method {method}.')

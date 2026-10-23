@@ -4,6 +4,16 @@ We reimplemented and renamed astropy's frame to better handle disk memmap and
 an easier unit/uncertainty workflow
 """
 
+from __future__ import annotations
+
+import typing as _t
+import numpy.typing as _npt
+from .._typing import ImageLike as _ImageLike
+from .._typing import (NumberArray as _NumberArray, PathLike as _PathLike,
+                       UnitLike as _UnitLike, HeaderLike as _HeaderLike,
+                       Index as _Index)
+from astropy.nddata import CCDData as _CCDData
+
 # Important:
 
 import os
@@ -27,11 +37,21 @@ from .._unit_property import unit_property
 __all__ = ['FrameData', 'PixelMaskFlags']
 
 
-def shape_consistency(data=None, uncertainty=None, mask=None, flags=None):
+def shape_consistency(
+    data: _ImageLike | None=None,
+    uncertainty: float | int | np.number | _ImageLike | None=None,
+    mask: _ImageLike | None=None,
+    flags: _ImageLike | None=None,
+) -> tuple[_ImageLike | None, _ImageLike | None, _ImageLike | None, _ImageLike | None]:
     """Check shape consistency across `data`, `uncertaitny` and `mask`."""
     dshape = np.shape(data)
 
-    def _check(arr, name, replicate=False):
+    def _check(
+        arr: float | int | np.number | _ImageLike | None,
+        name: str,
+        replicate: bool=False,
+    ) -> _ImageLike | None:
+        """Validate an optional array against data, expanding a scalar when allowed."""
         if arr is None:
             return
         if arr is not None and data is None:
@@ -55,7 +75,10 @@ def shape_consistency(data=None, uncertainty=None, mask=None, flags=None):
     return data, uncertainty, mask, flags
 
 
-def extract_units(data, unit):
+def extract_units(
+    data: _ImageLike | u.Quantity,
+    unit: _UnitLike,
+) -> u.UnitBase | None:
     """Extract and compare units if they are consistent."""
     if hasattr(data, 'unit'):
         dunit = u.Unit(data.unit)
@@ -78,20 +101,23 @@ def extract_units(data, unit):
     return dunit
 
 
-def uncertainty_unit_consistency(unit, uncertainty):
+def uncertainty_unit_consistency(
+    unit: _UnitLike,
+    uncertainty: float | int | np.number | _ImageLike | u.Quantity,
+) -> _npt.NDArray:
     """Check if an uncertainty can be set based on its unit.
 
     Parameters
     ----------
-    unit: string or `~astropy.units.Unit`
+    unit
         Target uncertainty unit. Mainly, this is the FrameData unit.
-    uncertainty: array_like
+    uncertainty
         Uncertainty object. If it has units, it will be converted to the
         target.
 
     Returns
     -------
-    uncertainty: `numpy.ndarray`
+    uncertainty
         Uncertainty converted to the target unit.
     """
     # Assume a plain array uncertainty if no unit.
@@ -105,7 +131,11 @@ def uncertainty_unit_consistency(unit, uncertainty):
     return u.Quantity(uncertainty, u_unit).to(unit).value
 
 
-def setup_filename(frame, cache_folder=None, filename=None):
+def setup_filename(
+    frame: FrameData,
+    cache_folder: str | TempDir | None=None,
+    filename: _PathLike | None=None,
+) -> str:
     """Handle filename and cache folder to a frame."""
     if not isinstance(frame, FrameData):
         raise ValueError('Only FrameData accepted.')
@@ -142,7 +172,17 @@ def setup_filename(frame, cache_folder=None, filename=None):
 
 
 class PixelMaskFlags(Flag):
-    """Flags for pixel masking."""
+    """Flags for pixel masking.
+
+    Examples
+    --------
+    >>> from astropop.framedata import PixelMaskFlags as F
+
+    >>> # Record saturation and request exclusion as separate bits.
+    >>> bits = F.SATURATED | F.MASKED
+    >>> print(bits.value, F.MASKED in bits)
+    18 True
+    """
     # Type of Masking
     INTERPOLATED = 1 << 0  # pixel interpolated from neighbors
     MASKED = 1 << 1  # pixel value removed
@@ -169,39 +209,39 @@ class FrameData:
 
     Parameters
     ----------
-    data : array_like or `~astropy.units.Quantity`
+    data
         The main data values. If `~astropy.units.Quantity`, unit will be set
         automatically. If using any quantity with masks, you must set the mask
         in a separate parameter.
-    unit : `~astropy.units.Unit` or string (optional)
+    unit
         The data unit. Must be `~astropy.units.Unit` compliant.
-    dtype : string or `~numpy.dtype` (optional)
+    dtype
         Integer or floating-point dtype of the data. Default: float64.
         Integer uncertainties use the same dtype and truncate fractions.
-    uncertainty : float, array_like or `None` (optional)
+    uncertainty
         Standard deviation in the data unit. Scalars are expanded to the
         image shape; arrays must match it. Default: None.
-    mask : array_like or `None` (optional)
+    mask
         Frame mask. All the masked pixels will be flagged as
         `PixelMaskFlags.MASKED` and `PixelMaskFlags.UNSPECIFIED`.
-    flags : array_like or `None` (optional)
+    flags
         Pixel flags matching the image shape. See `PixelMaskFlags` for values.
         Stored as uint8; defaults to zeros unless flag storage is disabled.
     wcs : `~astropy.wcs.WCS` or `None` (optional)
         World Coordinate System of the image. If meta or header keys already
         contain WCS information, an error will be raised.
-    meta or header: `dict` or `~astropy.io.fits.Header` (optional)
+    meta, header : dict or astropy.io.fits.Header, optional
         Metadata (header) of the frame. Only one accepted. If both are passed,
         error will be raised.
-    cache_folder : string, TempDir or `None` (optional)
+    cache_folder
         Directory for cached arrays. A temporary directory under the Astropy
         cache is created by default. Use a dedicated directory: cache cleanup
         removes the directory and its contents.
-    cache_filename : string, `~pathlib.Path` or `None` (optional)
-        Base file name to store the cached `FrameData`.
-    origin_filename : string, `~pathlib.Path` or `None` (optional)
+    cache_filename
+        Base file name to store the cached `~astropop.framedata.FrameData`.
+    origin_filename
         Original file name of the data, available as ``origin_filename``.
-    use_memmap_backend : `bool` (optional)
+    use_memmap_backend
         Enable memmapping in the constructor using the configured cache folder.
 
     Notes
@@ -213,7 +253,33 @@ class FrameData:
       `~astropop.config.AstropopConfig` settings. Set them before loading or
       creating frames to avoid allocating these arrays. Changing the settings
       afterward hides existing arrays without freeing their memory.
+
+    Examples
+    --------
+    >>> from astropop.framedata import FrameData
+    >>> frame = FrameData([[10., 20.]], unit='adu', uncertainty=2.)
+
+    >>> # A scalar standard uncertainty is expanded to the image shape.
+    >>> print(frame.shape, frame.uncertainty.tolist())
+    (1, 2) [[2.0, 2.0]]
+
+    >>> frame.mask_pixels((0, 1))
+    >>> print(frame.mask.tolist(), frame.data.tolist())
+    [[False, True]] [[10.0, 20.0]]
     """
+
+    # The decorator installs this descriptor at runtime; expose both access
+    # contracts to static tools without replacing the runtime implementation.
+    if _t.TYPE_CHECKING:
+        @property
+        def unit(self) -> u.UnitBase:
+            """Return the physical unit, using dimensionless units when none was stored."""
+            ...
+
+        @unit.setter
+        def unit(self, value: _UnitLike) -> None:
+            """Normalize and replace the physical unit without rescaling pixel values."""
+            ...
 
     _memmapping = False
     _unit = None
@@ -229,10 +295,26 @@ class FrameData:
     cache_filename = None
     memmap_objects = None
 
-    def __init__(self, data, unit=None, dtype=None, uncertainty=None,
-                 mask=None, flags=None, use_memmap_backend=False,
-                 cache_folder=None, cache_filename=None, origin_filename=None,
-                 **kwargs):
+    def __init__(
+        self,
+        data: _ImageLike | u.Quantity,
+        unit: _UnitLike=None,
+        dtype: _npt.DTypeLike | None=None,
+        uncertainty: float | int | np.number | _ImageLike | u.Quantity | None=None,
+        mask: _ImageLike | None=None,
+        flags: _ImageLike | None=None,
+        use_memmap_backend: bool=False,
+        cache_folder: str | TempDir | None=None,
+        cache_filename: _PathLike | None=None,
+        origin_filename: _PathLike | None=None,
+        **kwargs: _t.Any,
+    ) -> None:
+        """Initialize image storage, metadata and enabled optional arrays.
+
+        The class documentation describes constructor parameters and configuration.
+        Disabled optional arrays are discarded before validation or allocation.
+        Memory mapping is enabled only when explicitly requested.
+        """
         # setup names
         setup_filename(self, cache_folder, cache_filename)
         self._origin = origin_filename
@@ -292,7 +374,8 @@ class FrameData:
         self._meta_update(kwargs.pop('meta', None),
                           kwargs.pop('wcs', None))
 
-    def _meta_update(self, meta, wcs=None):
+    def _meta_update(self, meta: _HeaderLike | None, wcs: WCS | None=None) -> None:
+        """Normalize FITS metadata, append commentary and separate the WCS."""
         # simplify things by enforcing meta type
         if not isinstance(meta, (dict, fits.Header, type(None))):
             raise TypeError('meta must be a dict, Header or None.')
@@ -322,62 +405,74 @@ class FrameData:
         self._meta = header
 
     @property
-    def origin_filename(self):
+    def origin_filename(self) -> _PathLike | None:
         """Get the original filename of the data."""
         return self._origin
 
     @property
-    def shape(self):
-        """Get the data shape following numpy. `FrameData.data.shape`."""
+    def shape(self) -> tuple[int, int]:
+        """Get the data shape following numpy. ``FrameData.data.shape``."""
         return self._data.shape
 
     @property
-    def dtype(self):
-        """Get the dta type of the data. `FrameData.data.dtype`."""
+    def dtype(self) -> np.dtype:
+        """Get the dta type of the data. ``FrameData.data.dtype``."""
         return self._data.dtype
 
-    def astype(self, dtype):
-        """Return a copy of the current FrameData with new dtype in data."""
+    def astype(self, dtype: _npt.DTypeLike) -> FrameData:
+        """Return a copy of the current FrameData with new dtype in data.
+
+        Examples
+        --------
+        >>> from astropop.framedata import FrameData
+        >>> frame = FrameData([[10., 20.]], uncertainty=0.5)
+        >>> converted = frame.astype('float32')
+        >>> print(converted.dtype.name, converted.uncertainty.dtype.name)
+        float32 float32
+        """
         return self.copy(dtype)
 
     @property
-    def size(self):
-        """Get the size of the data. `FrameData.data.size`."""
+    def size(self) -> int:
+        """Get the size of the data. ``FrameData.data.size``."""
         return self._data.size
 
     @property
-    def wcs(self):
+    def wcs(self) -> WCS | None:
         """Get the World Coordinate System."""
         return self._wcs
 
     @wcs.setter
-    def wcs(self, value):
+    def wcs(self, value: WCS | None) -> None:
+        """Assign the WCS or clear it with None; reject other objects."""
         if isinstance(value, WCS) or value is None:
             self._wcs = value
         else:
             raise TypeError('wcs setter value must be a WCS instance.')
 
     @property
-    def meta(self):
+    def meta(self) -> fits.Header:
         """Get the metadata (header) of the frame."""
         return self._meta
 
     @meta.setter
-    def meta(self, value):
+    def meta(self, value: _HeaderLike | None) -> None:
+        """Replace normalized metadata, append its commentary and extract its WCS."""
         self._meta_update(value)
 
     @property
-    def header(self):
+    def header(self) -> fits.Header:
         """Get the header (metadata) of the frame."""
         return self._meta
 
     @property
-    def history(self):
+    def history(self) -> list[str]:
         """Get the FrameData stored history."""
         return self._history
 
     @history.setter
-    def history(self, value):
+    def history(self, value: str | _t.Iterable[str]) -> None:
+        """Append one or more history entries; ignore None."""
         if value is None:
             return
         if not np.isscalar(value):
@@ -386,12 +481,13 @@ class FrameData:
             self._history.append(value)
 
     @property
-    def comment(self):
+    def comment(self) -> list[str]:
         """Get the FrameData stored comments."""
         return self._comments
 
     @comment.setter
-    def comment(self, value):
+    def comment(self, value: str | _t.Iterable[str]) -> None:
+        """Append one or more comment entries; ignore None."""
         if value is None:
             return
         if not np.isscalar(value):
@@ -400,28 +496,29 @@ class FrameData:
             self._comments.append(value)
 
     @property
-    def data(self):
+    def data(self) -> _npt.NDArray:
         """Get the main data container."""
         return self._data
 
     @data.setter
-    def data(self, value):
+    def data(self, value: _ImageLike) -> None:
+        """Replace pixel storage and adopt an attached unit without propagating errors."""
         if hasattr(value, 'unit'):
             dunit = extract_units(value, None)
             self.unit = dunit
         self._data = reset_memmap_array(self._data, value)
 
-    def get_masked_data(self, fill_value=np.nan):
+    def get_masked_data(self, fill_value: float | int=np.nan) -> _npt.NDArray:
         """Copy pixel values, replacing MASKED pixels with a fill value.
 
         Parameters
         ----------
-        fill_value : number, optional
+        fill_value
             Value assigned to masked pixels in the copy. Default: numpy.nan.
 
         Returns
         -------
-        data : numpy.ndarray
+        data
             Independent data array. The stored pixels are unchanged. Integer data
             with an enabled mask are promoted to floating point for a nonfinite
             fill; finite fills retain the data dtype. With flags absent or disabled,
@@ -437,12 +534,18 @@ class FrameData:
 
     @property
     @_optional('FRAMEDATA_DISABLE_UNCERTAINTY')
-    def uncertainty(self):
+    def uncertainty(self) -> _npt.NDArray | None:
         """Get the uncertainty array, or None when absent or disabled."""
         return self._unct
 
     @uncertainty.setter
-    def uncertainty(self, value):
+    def uncertainty(self, value: float | int | np.number | _ImageLike | u.Quantity | None) -> None:
+        """Replace standard uncertainties, checking units and data shape.
+
+        A scalar is expanded to the image shape. None or disabled uncertainty storage
+        removes the existing array and its backing file. Integer storage requires
+        finite values.
+        """
         if value is None or conf.FRAMEDATA_DISABLE_UNCERTAINTY:
             self._unct = delete_array_memmap(self._unct, read=False, remove=True)
             return
@@ -465,20 +568,33 @@ class FrameData:
         self._unct = reset_memmap_array(self._unct, value)
         self._update_memmaps()
 
-    def get_uncertainty(self, return_none=True):
+    def get_uncertainty(self, return_none: bool=True) -> _npt.NDArray | None:
         """Return a copy of the standard uncertainties or an explicit fallback.
 
         Parameters
         ----------
-        return_none : bool, optional
+        return_none
             Return None for missing or disabled uncertainty. If False, allocate
             a zero-filled array instead. Default: True.
 
         Returns
         -------
-        uncertainty : numpy.ndarray or None
+        uncertainty
             Independent array with the data shape and dtype, or None. Returning
             zeros is an explicit allocation even when storage is disabled.
+
+        Examples
+        --------
+        >>> from astropop.framedata import FrameData
+        >>> frame = FrameData([[10., 20.]])
+        >>> print(frame.get_uncertainty())
+        None
+
+        >>> # Request zeros for calculations without allocating stored errors.
+        >>> print(frame.get_uncertainty(False).tolist())
+        [[0.0, 0.0]]
+        >>> print(frame.uncertainty)
+        None
         """
         uncertainty = self.uncertainty
         if uncertainty is None and return_none:
@@ -489,12 +605,17 @@ class FrameData:
 
     @property
     @_optional('FRAMEDATA_DISABLE_FLAGS')
-    def flags(self):
+    def flags(self) -> _npt.NDArray[np.uint8] | None:
         """Get the flags array, or None when absent or disabled."""
         return self._flags
 
     @flags.setter
-    def flags(self, value):
+    def flags(self, value: _ImageLike | None) -> None:
+        """Replace shape-matched flag bits using the pixel-flag dtype.
+
+        None or disabled flag storage removes the existing array and its backing
+        file. Scalar flags and values carrying physical units are rejected.
+        """
         if value is None or conf.FRAMEDATA_DISABLE_FLAGS:
             self._flags = delete_array_memmap(self._flags, read=False, remove=True)
             return
@@ -512,15 +633,25 @@ class FrameData:
                                           dtype=PixelMaskFlags.dtype)
         self._update_memmaps()
 
-    def add_flags(self, flag, where):
+    def add_flags(self, flag: PixelMaskFlags, where: _Index) -> None:
         """Add a given flag to the pixels in the given positions.
 
         Parameters
         ----------
-        flag : `PixelMaskFlags`
+        flag
             Flag to be added.
-        where : `~numpy.ndarray`
+        where
             Positions where the flag will be added.
+
+        Examples
+        --------
+        >>> from astropop.framedata import FrameData, PixelMaskFlags as F
+        >>> frame = FrameData([[10., 100.]])
+
+        >>> # Mark the reason and exclusion policy together at bright pixels.
+        >>> frame.add_flags(F.SATURATED | F.MASKED, where=frame.data > 50)
+        >>> print(frame.flags.tolist(), frame.mask.tolist())
+        [[0, 18]] [[False, True]]
         """
         if not isinstance(flag, PixelMaskFlags):
             raise TypeError('Flag must be a PixelMaskFlags instance.')
@@ -532,20 +663,23 @@ class FrameData:
         self._flags[where] |= flag.value
 
     @property
-    def mask(self):
+    def mask(self) -> _npt.NDArray[np.bool_] | None:
         """Return masked pixels, or None when flags are absent or disabled."""
         return self.mask_flags(PixelMaskFlags.MASKED)
 
-    def mask_flags(self, flags):
+    def mask_flags(
+        self,
+        flags: PixelMaskFlags | _t.Sequence[PixelMaskFlags],
+    ) -> _npt.NDArray[np.bool_] | None:
         """Get a mask pixels with an specific flag.
 
         Parameters
         ----------
-        flags: list of `PixelMaskFlags` or `PixelMaskFlags`
+        flags
 
         Returns
         -------
-        mask: `~numpy.ndarray` or None
+        mask
             True for masked pixels; None when flags are absent or disabled.
         """
         pixel_flags = self.flags
@@ -554,26 +688,30 @@ class FrameData:
         return mask_from_flags(pixel_flags, flags,
                                allowed_flags_class=PixelMaskFlags)
 
-    def mask_pixels(self, pixels):
+    def mask_pixels(self, pixels: _Index) -> None:
         """Mask pixels.
 
         Parameters
         ----------
-        pixels: `~numpy.ndarray` or tuple
+        pixels
             Pixels to be masked. Can be a tuple of (y, x) positions or a
             boolean array where True means masked. Uses the same standard as
             ``array[pixels]`` indexing.
         """
         self.add_flags(PixelMaskFlags.MASKED, pixels)
 
-    def enable_memmap(self, cache_folder=None, filename=None):
+    def enable_memmap(
+        self,
+        cache_folder: str | TempDir | None=None,
+        filename: _PathLike | None=None,
+    ) -> None:
         """Enable array file memmapping.
 
         Parameters
         ----------
-        filename : str, optional
+        filename
             Custom memmap file name.
-        cache_folder : str, optional
+        cache_folder
             Custom folder to cache data.
         """
         # early return for already memmapped
@@ -590,14 +728,14 @@ class FrameData:
         self._memmapping = True
         self._update_memmaps()
 
-    def disable_memmap(self):
+    def disable_memmap(self) -> None:
         """Disable frame file memmapping (load to memory)."""
         self._data = delete_array_memmap(self._data, read=True, remove=True)
         self._flags = delete_array_memmap(self._flags, read=True, remove=True)
         self._unct = delete_array_memmap(self._unct, read=True, remove=True)
         self._memmapping = False
 
-    def _update_memmaps(self):
+    def _update_memmaps(self) -> None:
         """Update the memmap files."""
 
         if self._memmapping:
@@ -609,22 +747,33 @@ class FrameData:
                         self.cache_filename + f'.{suffix}.npy')
                     setattr(self, attr, create_array_memmap(str(filename), value))
 
-    def copy(self, dtype=None):
+    def copy(self, dtype: _npt.DTypeLike | None=None) -> FrameData:
         """Copy data, enabled optional arrays, metadata and WCS independently.
 
         Parameters
         ----------
-        dtype : numpy dtype or str, optional
+        dtype
             Convert the copied data and present uncertainties to this dtype.
             If None, keep their existing dtypes. Default: None.
 
         Returns
         -------
-        frame : FrameData
+        frame
             Independent frame with a separate cache directory. Memory-mapped
             sources produce a copy with its own mapped files. Optional-array
             configuration is evaluated when copying, so hidden arrays are omitted.
             Origin filename, history and comments are preserved.
+
+        Examples
+        --------
+        >>> from astropop.framedata import FrameData
+        >>> original = FrameData([[10.]])
+        >>> duplicate = original.copy()
+
+        >>> # Editing copied pixels leaves the original frame unchanged.
+        >>> duplicate.data[0, 0] = 99
+        >>> print(original.data.tolist(), duplicate.data.tolist())
+        [[10.0]] [[99.0]]
         """
         nf = object.__new__(FrameData)
         # copy metadata
@@ -665,17 +814,18 @@ class FrameData:
 
         return nf
 
-    def __copy__(self):
+    def __copy__(self) -> FrameData:
         """Copy the current instance to a new one."""
         return self.copy()
 
-    def __deepcopy__(self, memo):
+    def __deepcopy__(self, memo: dict[int, object]) -> FrameData:
         """Copy arrays and metadata without sharing memory maps."""
         result = self.copy()
         memo[id(self)] = result
         return result
 
-    def __del__(self):
+    def __del__(self) -> None:
+        """Release memory mappings before deleting the managed cache directory."""
         if self.cache is not None:
             # Release mappings before deleting their files on Windows. There
             # is no need to copy the arrays when destroying the frame.
@@ -685,38 +835,38 @@ class FrameData:
                         array._mmap.close()
             self.cache.delete()
 
-    def median(self, **kwargs):
+    def median(self, **kwargs: _t.Any) -> _NumberArray | u.Quantity:
         """Compute and return the median of the data."""
         med = np.median(self._data, **kwargs)
         if self._unit is None:
             return med
         return med * self.unit
 
-    def mean(self, **kwargs):
+    def mean(self, **kwargs: _t.Any) -> _NumberArray | u.Quantity:
         """Compute and return the mean of the data."""
         if self._unit is None:
             return self._data.mean(**kwargs)
         return self._data.mean(**kwargs) * self.unit
 
-    def std(self, **kwargs):
+    def std(self, **kwargs: _t.Any) -> _NumberArray | u.Quantity:
         """Compute and return the std dev of the data."""
         if self._unit is None:
             return self._data.std(**kwargs)
         return self._data.std(**kwargs) * self.unit
 
-    def min(self):
+    def min(self) -> _NumberArray | u.Quantity:
         """Compute minimum value of the data."""
         if self._unit is None:
             return self._data.min()
         return self._data.min() * self.unit
 
-    def max(self):
+    def max(self) -> _NumberArray | u.Quantity:
         """Compute minimum value of the data."""
         if self._unit is None:
             return self._data.max()
         return self._data.max() * self.unit
 
-    def statistics(self):
+    def statistics(self) -> dict[str, _NumberArray | u.Quantity]:
         """Compute general statistics ofthe image."""
         return {'min': self.min(),
                 'max': self.max(),
@@ -724,19 +874,24 @@ class FrameData:
                 'median': self.median(),
                 'std': self.std()}
 
-    def to_hdu(self, wcs_relax=True, no_fits_standard_units=True, **kwargs):
+    def to_hdu(
+        self,
+        wcs_relax: bool | int=True,
+        no_fits_standard_units: bool=True,
+        **kwargs: _t.Any,
+    ) -> fits.HDUList:
         """Generate an HDUList from this FrameData.
 
         Parameters
         ----------
-        wcs_relax: `bool`, optional.
+        wcs_relax
             Allow non-standard WCS keys.
             Default: `True`
-        no_fits_standard_units: `bool`, optional
+        no_fits_standard_units
             Allow Astropy-compatible unit strings instead of requiring
             FITS-standard unit formatting.
             Default: `True`
-        **kwargs:
+        **kwargs
             hdu_uncertainty: string, optional
                 Standard-deviation extension name (default: ``UNCERT``).
                 Set to None to omit this extension.
@@ -750,19 +905,27 @@ class FrameData:
 
         Returns
         -------
-        `~astropy.io.fits.HDUList` :
+        result
             HDU list containing data, metadata, WCS, and present optional arrays.
+
+        Examples
+        --------
+        >>> from astropop.framedata import FrameData
+        >>> frame = FrameData([[10.]], unit='adu', uncertainty=2.)
+        >>> with frame.to_hdu() as hdus:
+        ...     print(hdus[0].data.tolist(), hdus['UNCERT'].data.tolist())
+        [[10.0]] [[2.0]]
         """
         return _to_hdu(self, wcs_relax=wcs_relax,
                        no_fits_standard_units=no_fits_standard_units,
                        **kwargs)
 
-    def to_ccddata(self):
+    def to_ccddata(self) -> _CCDData:
         """Convert this FrameData to CCDData.
 
         Returns
         -------
-        `~astropy.nddata.CCDData` :
+        result
             CCDData with data, unit, metadata, WCS, standard-deviation
             uncertainty, and Boolean mask. Missing optional arrays remain
             None. Individual flag bits and the separate history and comment
@@ -770,24 +933,29 @@ class FrameData:
         """
         return _to_ccddata(self)
 
-    def write(self, filename, overwrite=False, no_fits_standard_units=True,
-              **kwargs):
+    def write(
+        self,
+        filename: _PathLike,
+        overwrite: bool=False,
+        no_fits_standard_units: bool=True,
+        **kwargs: _t.Any,
+    ) -> None:
         """Write frame to a fits file.
 
         Parameters
         ----------
-        filename: str
+        filename
             Name of the file to write.
-        overwrite: bool, optional
+        overwrite
             If True, overwrite the file if it exists.
         wcs_relax: `bool`, optional.
             Allow non-standard WCS keys.
             Default: `True`
-        no_fits_standard_units: `bool`, optional
+        no_fits_standard_units
             Allow Astropy-compatible unit strings instead of requiring
             FITS-standard unit formatting.
             Default: `True`
-        **kwargs:
+        **kwargs
             hdu_uncertainty: string, optional
                 Standard-deviation extension name (default: ``UNCERT``).
                 Set to None to omit this extension.

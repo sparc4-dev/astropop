@@ -1,6 +1,10 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 """Create WCS manually."""
 
+from __future__ import annotations
+
+import typing as _t
+
 import six
 import numpy as np
 from astropy.wcs import WCS
@@ -19,27 +23,59 @@ _angles = {
 }
 
 
-def wcs_from_coords(x, y, ra, dec, plate_scale, north, flip=None):
-    """Create WCS based on coordinates and plate scale.
+def wcs_from_coords(
+    x: float,
+    y: float,
+    ra: str | float,
+    dec: str | float,
+    plate_scale: float,
+    north: float | _t.Literal['left', 'right', 'top', 'bottom'],
+    flip: _t.Literal['ra', 'dec', 'all'] | None=None,
+) -> WCS:
+    """Create an approximate tangent-plane WCS from one reference position.
 
-    x, y: float, pixel coordinates in image
-    ra, dec: float, sky coordinates
+    Parameters
+    ----------
+    x, y
+        Reference pixel in FITS one-based coordinates, copied directly to
+        CRPIX. Add one to zero-based detection or NumPy coordinates.
+    ra, dec
+        Sky position of the reference pixel. Numeric values are degrees;
+        sexagesimal strings are parsed by ``guess_coordinates``.
+    plate_scale
+        Pixel scale in arcseconds per pixel.
+    north
+        Direction of increasing declination before applying ``flip``, measured
+        counterclockwise from positive x with positive y displayed upward.
+        Numeric angles are degrees. ``'right'`` is 0, ``'top'`` is 90,
+        ``'left'`` is 180 and ``'bottom'`` is 270.
+    flip
+        ``'ra'`` reverses the RA direction, ``'dec'`` reverses declination,
+        and ``'all'`` reverses both. None keeps the default orientation:
+        with ``north='top'``, north is up and east is left.
 
-    plate_scale in arcsec/pix
+    Returns
+    -------
+    wcs
+        Two-dimensional TAN projection with the supplied reference pixel,
+        reference sky position, scale and orientation.
 
-    north direction can be angles ('cw', from top axis) or
-    ['right', 'top', 'left', 'bottom'] to angles [270, 0, 90, 180].
+    Notes
+    -----
+    This constructs a WCS from assumed geometry; it does not fit measured
+    reference stars or model field distortion. Check the mapping against
+    reference sources, particularly far from CRPIX. Astropy's high-level
+    pixel methods use zero-based coordinates even though CRPIX is one-based.
 
-    flip means if some direction is mirrored in image.
-    Can be 'ra', 'dec', 'all' or None
-    The standard coordinates are ra and dec in the following order, ccw:
-    W - N - E - S
+    Examples
+    --------
+    >>> from astropop.astrometry import wcs_from_coords
+    >>> wcs = wcs_from_coords(16, 16, 120., -30., 0.34, north='top')
 
-    Coordinate values grow to E and N.
-
-    Problems:
-    This algorith is not good for coordinates far from crpix. But is useful
-    when you cannot solve with other algorithms. (Like just one star in field).
+    >>> # FITS reference pixel (16, 16) is (15, 15) in the high-level WCS API.
+    >>> sky = wcs.pixel_to_world(15, 15)
+    >>> print(f'{sky.ra.deg:.3f}, {sky.dec.deg:.3f} deg')
+    120.000, -30.000 deg
     """
     sk = guess_coordinates(ra, dec)
     ra, dec = sk.ra.degree, sk.dec.degree
